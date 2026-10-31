@@ -1,6 +1,6 @@
-# ⚡ ThinkOpt - Laptop System & Battery Optimizer
+# ⚡ OmniTune - Universal System & Hardware Optimizer
 
-Ứng dụng tối ưu hóa hệ thống, phần cứng và thời lượng pin chuyên sâu cho Windows/Laptop, được viết 100% bằng **Rust** kết hợp Win32 API và GUI `egui/eframe`.
+Ứng dụng tối ưu hóa hệ thống, phần cứng và thời lượng pin chuyên sâu cho Windows (PC & Laptop), được viết 100% bằng **Rust** kết hợp Win32 API trực tiếp và GUI `egui/eframe`.
 
 ---
 
@@ -17,8 +17,8 @@ Tự động tinh chỉnh CPU, GPU, bộ nhớ RAM, mạng và quyền ưu tiên
 
 - **🎮 Chơi Game & Đồ họa (Gaming Mode):**
   - Windows Timer Resolution **1.0ms** (`timeBeginPeriod(1)`) triệt tiêu hiện tượng khựng khung hình (micro-stuttering) và trễ chuột.
-  - Tắt ngầm Windows GameDVR background capture (`AppCaptureEnabled = 0`) để giải phóng toàn bộ năng lực GPU Intel HD 620.
-  - Khóa trần CPU 90% (2.8GHz, ~10W) nhường trọn 12W điện cho GPU tích hợp đạt đỉnh 1150MHz mà không bị hãm nhiệt.
+  - Tắt ngầm Windows GameDVR background capture (`AppCaptureEnabled = 0`) để giải phóng toàn bộ năng lực GPU.
+  - Cân bằng xung nhịp CPU nhường điện năng cho GPU đạt đỉnh xung nhịp mà không bị hãm nhiệt.
   - Thu hồi Working Set RAM để mở rộng dung lượng Shared VRAM.
 
 - **☕ Cà phê & Di động (Cafe / Siêu tiết kiệm pin):**
@@ -27,14 +27,14 @@ Tự động tinh chỉnh CPU, GPU, bộ nhớ RAM, mạng và quyền ưu tiên
   - Tự động đặt độ sáng 45% và đưa các dịch vụ nền xuống trạng thái nhàn rỗi (`IDLE_PRIORITY_CLASS`).
 
 - **💻 Lập trình & Biên dịch (Developer):**
-  - Mở tối đa 100% Turbo Boost (3.9GHz) toàn bộ nhân/luồng.
+  - Mở tối đa 100% Turbo Boost toàn bộ nhân/luồng.
   - Quạt tản nhiệt quay chủ động để đẩy nhanh nhiệt khi biên dịch nặng.
   - Tự động phát hiện và nâng quyền ưu tiên của `rustc`, `cargo`, `go`, `node` lên `HIGH_PRIORITY_CLASS`.
   - Dọn sạch Working Set RAM để compiler đọc ghi file SSD NVMe nhanh nhất.
 
 - **🎬 Xem phim & Thư giãn (Media & Chill):**
   - Khóa chống tắt màn hình và ngăn sleep khi đang xem video.
-  - CPU 55% im lặng tuyệt đối 0dB, nhường phần cứng Intel QuickSync giải mã video 1080p/4K mượt mà.
+  - CPU 55% im lặng tuyệt đối 0dB, nhường phần cứng GPU giải mã video 1080p/4K mượt mà.
 
 - **🤖 Tự động nhận diện thông minh (Smart Auto-Detect):**
   - Tự động chuyển kịch bản tương ứng khi phát hiện mở MiniRemote/RustDesk, chạy lệnh compile hoặc khi pin sắp cạn.
@@ -53,7 +53,7 @@ Tự động tinh chỉnh CPU, GPU, bộ nhớ RAM, mạng và quyền ưu tiên
 ### 4. 🔋 Quản lý Pin & Xung nhịp CPU (Hardware Power Control)
 - Đọc trực tiếp cảm biến vi điều khiển phần cứng ACPI: Dung lượng thiết kế gốc (`BatteryStaticData`), dung lượng nạp đầy thực tế (`BatteryFullChargedCapacity`), và số chu kỳ sạc (`BatteryCycleCount`).
 - Tự động tính toán % chai pin thực tế.
-- Hỗ trợ đầy đủ laptop pin đơn và hệ thống **Pin kép (Dual Battery)** như ThinkPad T470.
+- Hỗ trợ đầy đủ laptop pin đơn và hệ thống **Pin kép (Dual Battery)**.
 - Điều khiển trần xung nhịp CPU và độ sáng màn hình qua WMI `WmiSetBrightness`.
 
 ### 5. 🛡️ Bảo vệ tuổi thọ máy (Hardware Protection)
@@ -71,12 +71,12 @@ Tự động tinh chỉnh CPU, GPU, bộ nhớ RAM, mạng và quyền ưu tiên
 
 ### Biên dịch từ mã nguồn:
 ```bash
-git clone https://github.com/thuanlovevietnam/thinkopt.git
-cd thinkopt
+git clone https://github.com/thuanlovevietnam/omnitune.git
+cd omnitune
 cargo build --release
 ```
 
-File thực thi độc lập sẽ nằm tại: `target/release/system-optimizer.exe`.
+File thực thi độc lập sẽ nằm tại: `target/release/omnitune.exe`.
 
 ---
 

@@ -194,13 +194,13 @@ impl eframe::App for OptimizerApp {
                 // Top Header Row
                 ui.horizontal(|ui| {
                     ui.heading(
-                        RichText::new("⚡ ThinkOpt")
+                        RichText::new("⚡ OmniTune")
                             .size(19.0)
                             .strong()
                             .color(p.accent_blue),
                     );
                     ui.label(
-                        RichText::new("Laptop Optimizer")
+                        RichText::new("System & Hardware Optimizer")
                             .size(12.0)
                             .color(p.text_secondary),
                     );

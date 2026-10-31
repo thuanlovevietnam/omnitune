@@ -34,12 +34,12 @@ fn main() -> eframe::Result {
             .with_inner_size([win_w, win_h])
             .with_min_inner_size([580.0, 460.0])
             .with_position([pos_x, pos_y])
-            .with_title("ThinkOpt - Laptop System & Battery Optimizer"),
+            .with_title("OmniTune - Universal System & Hardware Optimizer"),
         ..Default::default()
     };
 
     eframe::run_native(
-        "ThinkOpt Optimizer",
+        "OmniTune Optimizer",
         options,
         Box::new(|cc| Ok(Box::new(OptimizerApp::new(cc)))),
     )
