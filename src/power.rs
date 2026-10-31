@@ -161,3 +161,168 @@ pub fn get_brightness() -> u32 {
     }
     50
 }
+
+pub fn get_cpu_max_state_dc() -> u32 {
+    let output = Command::new("powercfg")
+        .args(["/q", "SCHEME_CURRENT", "SUB_PROCESSOR", "PROCTHROTTLEMAX"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            if line.contains("Current DC Power Setting Index:") {
+                let parts: Vec<&str> = line.split(':').collect();
+                if let Some(hex_str) = parts.get(1) {
+                    let cleaned = hex_str.trim().trim_start_matches("0x");
+                    if let Ok(val) = u32::from_str_radix(cleaned, 16) {
+                        return val;
+                    }
+                }
+            }
+        }
+    }
+    80
+}
+
+pub fn get_cpu_max_state_ac() -> u32 {
+    let output = Command::new("powercfg")
+        .args(["/q", "SCHEME_CURRENT", "SUB_PROCESSOR", "PROCTHROTTLEMAX"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            if line.contains("Current AC Power Setting Index:") {
+                let parts: Vec<&str> = line.split(':').collect();
+                if let Some(hex_str) = parts.get(1) {
+                    let cleaned = hex_str.trim().trim_start_matches("0x");
+                    if let Ok(val) = u32::from_str_radix(cleaned, 16) {
+                        return val;
+                    }
+                }
+            }
+        }
+    }
+    100
+}
+
+pub fn set_cooling_policy(active: bool) -> bool {
+    let val = if active { "1" } else { "0" };
+    let res1 = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "SYSCOOLPOL", val])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    let res2 = Command::new("powercfg")
+        .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "SYSCOOLPOL", val])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    let res3 = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    res1 && res2 && res3
+}
+
+pub fn get_cooling_policy() -> bool {
+    let output = Command::new("powercfg")
+        .args(["/q", "SCHEME_CURRENT", "SUB_PROCESSOR", "SYSCOOLPOL"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            if line.contains("Current DC Power Setting Index:") {
+                return line.contains("0x00000001");
+            }
+        }
+    }
+    true
+}
+
+pub fn set_gamedvr(enable: bool) -> bool {
+    let val = if enable { "1" } else { "0" };
+    Command::new("reg")
+        .args([
+            "add",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR",
+            "/v",
+            "AppCaptureEnabled",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            val,
+            "/f",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub fn get_gamedvr() -> bool {
+    let output = Command::new("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR",
+            "/v",
+            "AppCaptureEnabled",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        return text.contains("0x1");
+    }
+    false
+}
+
+pub fn set_timer_resolution_1ms(enable: bool) {
+    unsafe {
+        if enable {
+            let _ = windows_sys::Win32::Media::timeBeginPeriod(1);
+        } else {
+            let _ = windows_sys::Win32::Media::timeEndPeriod(1);
+        }
+    }
+}
+
+pub fn set_keep_awake(mode: u8) {
+    unsafe {
+        match mode {
+            1 => {
+                // System awake (no sleep, display can turn off)
+                windows_sys::Win32::System::Power::SetThreadExecutionState(
+                    windows_sys::Win32::System::Power::ES_CONTINUOUS
+                        | windows_sys::Win32::System::Power::ES_SYSTEM_REQUIRED,
+                );
+            }
+            2 => {
+                // Both system and display awake
+                windows_sys::Win32::System::Power::SetThreadExecutionState(
+                    windows_sys::Win32::System::Power::ES_CONTINUOUS
+                        | windows_sys::Win32::System::Power::ES_SYSTEM_REQUIRED
+                        | windows_sys::Win32::System::Power::ES_DISPLAY_REQUIRED,
+                );
+            }
+            _ => {
+                // Normal OS managed
+                windows_sys::Win32::System::Power::SetThreadExecutionState(
+                    windows_sys::Win32::System::Power::ES_CONTINUOUS,
+                );
+            }
+        }
+    }
+}

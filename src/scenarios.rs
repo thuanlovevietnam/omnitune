@@ -301,7 +301,7 @@ pub fn detect_recommended_scenario(
     None
 }
 
-fn prioritize_apps(sys: &mut System, app_names: &[&str], priority_class: u32) -> usize {
+pub fn prioritize_apps(sys: &mut System, app_names: &[&str], priority_class: u32) -> usize {
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let mut modified = 0;
 
