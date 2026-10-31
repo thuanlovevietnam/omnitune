@@ -80,5 +80,6 @@ File thực thi độc lập sẽ nằm tại: `target/release/omnitune.exe`.
 
 ---
 
-## 📄 Giấy phép (License)
-Dự án được phát hành theo giấy phép MIT.
+## 📄 Giấy phép Bản quyền (License)
+Bản quyền thuộc về © 2026 **thuanlovevietnam**. Mọi quyền được bảo lưu (All Rights Reserved).  
+Mã nguồn chỉ dùng cho mục đích cá nhân và đánh giá. Không sao chép, phân phối lại hoặc thương mại hóa khi chưa có sự đồng ý của tác giả.
