@@ -14,20 +14,38 @@ mod types;
 
 use app::OptimizerApp;
 use eframe::NativeOptions;
+use windows_sys::Win32::Foundation::RECT;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
+    GetSystemMetrics, SystemParametersInfoW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA,
 };
 
 fn main() -> eframe::Result {
-    let win_w = 780.0;
-    let win_h = 550.0;
+    let (pos_x, pos_y, win_w, win_h) = unsafe {
+        let mut work_area: RECT = std::mem::zeroed();
+        let ok = SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            &mut work_area as *mut _ as *mut _,
+            0,
+        );
 
-    let (pos_x, pos_y) = unsafe {
-        let screen_w = GetSystemMetrics(SM_CXSCREEN) as f32;
-        let screen_h = GetSystemMetrics(SM_CYSCREEN) as f32;
-        let x = ((screen_w - win_w) / 2.0).max(0.0);
-        let y = ((screen_h - win_h) / 2.0).max(0.0);
-        (x, y)
+        let (screen_w, screen_h) = if ok != 0 {
+            (
+                (work_area.right - work_area.left) as f32,
+                (work_area.bottom - work_area.top) as f32,
+            )
+        } else {
+            (
+                GetSystemMetrics(SM_CXSCREEN) as f32,
+                GetSystemMetrics(SM_CYSCREEN) as f32,
+            )
+        };
+
+        let w = 820.0f32.min(screen_w - 20.0);
+        let h = (screen_h - 10.0).max(520.0);
+        let x = ((screen_w - w) / 2.0).max(0.0);
+        let y = 5.0f32;
+        (x, y, w, h)
     };
 
     let options = NativeOptions {

@@ -432,140 +432,137 @@ impl eframe::App for OptimizerApp {
 
         let p = self.palette;
 
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(p.bg_main).inner_margin(egui::Margin::same(8)))
+        // --- CỘT 1: SIDEBAR TABS (185px - FULL HEIGHT 100% CẢ CHIỀU DỌC) ---
+        egui::Panel::left("left_sidebar")
+            .exact_size(185.0)
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(if p.is_dark {
+                        Color32::from_rgb(14, 20, 34)
+                    } else {
+                        Color32::from_rgb(238, 242, 248)
+                    })
+                    .stroke(Stroke::new(1.0, p.card_border))
+                    .inner_margin(egui::Margin::same(10)),
+            )
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    // --- CỘT 1: SIDEBAR TABS (180px) ---
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(180.0, ui.available_height()),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_width(180.0);
+                // App Logo & Branding
+                ui.add_space(2.0);
+                ui.heading(
+                    RichText::new("⚡ OmniTune")
+                        .size(20.0)
+                        .strong()
+                        .color(p.accent_blue),
+                );
+                ui.label(
+                    RichText::new("System Optimizer")
+                        .size(11.5)
+                        .color(p.text_secondary),
+                );
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
 
-                            // App Logo & Branding
-                            ui.add_space(2.0);
-                            ui.heading(
-                                RichText::new("⚡ OmniTune")
-                                    .size(20.0)
-                                    .strong()
-                                    .color(p.accent_blue),
-                            );
-                            ui.label(
-                                RichText::new("System Optimizer")
-                                    .size(11.5)
-                                    .color(p.text_secondary),
-                            );
-                            ui.add_space(4.0);
-                            ui.separator();
-                            ui.add_space(4.0);
+                // Vertical Tab Navigation List
+                render_sidebar_tab(ui, &mut self.current_tab, Tab::Scenarios, "🎯 Kịch bản", &p);
+                ui.add_space(3.0);
+                render_sidebar_tab(ui, &mut self.current_tab, Tab::Criteria, "📋 Tiêu chí setup", &p);
+                ui.add_space(3.0);
+                render_sidebar_tab(ui, &mut self.current_tab, Tab::Dashboard, "📊 Tổng quan", &p);
+                ui.add_space(3.0);
+                render_sidebar_tab(ui, &mut self.current_tab, Tab::Cleaner, "🧹 Dọn rác", &p);
+                ui.add_space(3.0);
+                render_sidebar_tab(ui, &mut self.current_tab, Tab::Memory, "🧠 RAM & Tiến trình", &p);
+                ui.add_space(3.0);
+                render_sidebar_tab(ui, &mut self.current_tab, Tab::Power, "🔋 Pin & ACPI", &p);
+                ui.add_space(3.0);
+                render_sidebar_tab(ui, &mut self.current_tab, Tab::Protection, "🚀 Khởi động & Bảo vệ", &p);
 
-                            // Vertical Tab Navigation List
-                            render_sidebar_tab(ui, &mut self.current_tab, Tab::Scenarios, "🎯 Kịch bản", &p);
-                            ui.add_space(2.0);
-                            render_sidebar_tab(ui, &mut self.current_tab, Tab::Criteria, "📋 Tiêu chí setup", &p);
-                            ui.add_space(2.0);
-                            render_sidebar_tab(ui, &mut self.current_tab, Tab::Dashboard, "📊 Tổng quan", &p);
-                            ui.add_space(2.0);
-                            render_sidebar_tab(ui, &mut self.current_tab, Tab::Cleaner, "🧹 Dọn rác", &p);
-                            ui.add_space(2.0);
-                            render_sidebar_tab(ui, &mut self.current_tab, Tab::Memory, "🧠 RAM & Tiến trình", &p);
-                            ui.add_space(2.0);
-                            render_sidebar_tab(ui, &mut self.current_tab, Tab::Power, "🔋 Pin & ACPI", &p);
-                            ui.add_space(2.0);
-                            render_sidebar_tab(ui, &mut self.current_tab, Tab::Protection, "🚀 Khởi động & Bảo vệ", &p);
+                // Bottom Utilities in Sidebar (Pinned to absolute bottom of window!)
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    ui.add_space(4.0);
 
-                            // Bottom Utilities in Sidebar
-                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                                ui.add_space(4.0);
+                    // Theme Toggle Button
+                    let (theme_btn_text, theme_btn_bg) = if self.theme_mode == ThemeMode::Dark {
+                        ("☀️ Giao diện Sáng", Color32::from_rgb(234, 179, 8))
+                    } else {
+                        ("🌙 Giao diện Tối", Color32::from_rgb(30, 41, 59))
+                    };
 
-                                // Theme Toggle Button
-                                let (theme_btn_text, theme_btn_bg) = if self.theme_mode == ThemeMode::Dark {
-                                    ("☀️ Giao diện Sáng", Color32::from_rgb(234, 179, 8))
-                                } else {
-                                    ("🌙 Giao diện Tối", Color32::from_rgb(30, 41, 59))
-                                };
+                    let theme_btn = egui::Button::new(
+                        RichText::new(theme_btn_text)
+                            .size(12.0)
+                            .strong()
+                            .color(if self.theme_mode == ThemeMode::Dark { Color32::BLACK } else { Color32::WHITE }),
+                    )
+                    .fill(theme_btn_bg)
+                    .min_size(Vec2::new(ui.available_width(), 32.0))
+                    .corner_radius(CornerRadius::same(5));
 
-                                let theme_btn = egui::Button::new(
-                                    RichText::new(theme_btn_text)
-                                        .size(12.0)
+                    if ui.add(theme_btn).clicked() {
+                        self.theme_mode = match self.theme_mode {
+                            ThemeMode::Dark => ThemeMode::Light,
+                            ThemeMode::Light => ThemeMode::Dark,
+                        };
+                        self.palette = apply_theme(ui.ctx(), self.theme_mode);
+                    }
+
+                    ui.add_space(6.0);
+
+                    // Power Status Badge
+                    let (status_text, badge_bg, badge_fg) = if self.power_status.is_ac_online {
+                        (
+                            "🔌 Nguồn AC",
+                            if p.is_dark { Color32::from_rgb(20, 83, 45) } else { Color32::from_rgb(220, 252, 231) },
+                            if p.is_dark { p.success_green } else { Color32::from_rgb(21, 128, 61) },
+                        )
+                    } else {
+                        (
+                            "🔋 Dùng Pin",
+                            if p.is_dark { Color32::from_rgb(124, 45, 18) } else { Color32::from_rgb(254, 243, 199) },
+                            if p.is_dark { p.warn_amber } else { Color32::from_rgb(180, 83, 9) },
+                        )
+                    };
+
+                    egui::Frame::new()
+                        .fill(badge_bg)
+                        .corner_radius(CornerRadius::same(5))
+                        .stroke(Stroke::new(1.0, badge_fg))
+                        .inner_margin(egui::Margin::symmetric(8, 4))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(format!("{} {}%", status_text, self.power_status.battery_percent))
+                                        .size(11.5)
                                         .strong()
-                                        .color(if self.theme_mode == ThemeMode::Dark { Color32::BLACK } else { Color32::WHITE }),
-                                )
-                                .fill(theme_btn_bg)
-                                .min_size(Vec2::new(ui.available_width(), 30.0))
-                                .corner_radius(CornerRadius::same(5));
-
-                                if ui.add(theme_btn).clicked() {
-                                    self.theme_mode = match self.theme_mode {
-                                        ThemeMode::Dark => ThemeMode::Light,
-                                        ThemeMode::Light => ThemeMode::Dark,
-                                    };
-                                    self.palette = apply_theme(ui.ctx(), self.theme_mode);
-                                }
-
-                                ui.add_space(4.0);
-
-                                // Power Status Badge
-                                let (status_text, badge_bg, badge_fg) = if self.power_status.is_ac_online {
-                                    (
-                                        "🔌 Nguồn AC",
-                                        if p.is_dark { Color32::from_rgb(20, 83, 45) } else { Color32::from_rgb(220, 252, 231) },
-                                        if p.is_dark { p.success_green } else { Color32::from_rgb(21, 128, 61) },
-                                    )
-                                } else {
-                                    (
-                                        "🔋 Dùng Pin",
-                                        if p.is_dark { Color32::from_rgb(124, 45, 18) } else { Color32::from_rgb(254, 243, 199) },
-                                        if p.is_dark { p.warn_amber } else { Color32::from_rgb(180, 83, 9) },
-                                    )
-                                };
-
-                                egui::Frame::new()
-                                    .fill(badge_bg)
-                                    .corner_radius(CornerRadius::same(5))
-                                    .stroke(Stroke::new(1.0, badge_fg))
-                                    .inner_margin(egui::Margin::symmetric(8, 4))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(
-                                                RichText::new(format!("{} {}%", status_text, self.power_status.battery_percent))
-                                                    .size(11.5)
-                                                    .strong()
-                                                    .color(badge_fg),
-                                            );
-                                        });
-                                    });
-
-                                ui.add_space(4.0);
-                                ui.separator();
+                                        .color(badge_fg),
+                                );
                             });
-                        },
-                    );
+                        });
 
+                    ui.add_space(6.0);
                     ui.separator();
-
-                    // --- CỘT 2: NỘI DUNG TAB (Full remaining width) ---
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(ui.available_width(), ui.available_height()),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    match self.current_tab {
-                                        Tab::Scenarios => self.render_scenarios(ui),
-                                        Tab::Criteria => self.render_criteria(ui),
-                                        Tab::Dashboard => self.render_dashboard(ui),
-                                        Tab::Cleaner => self.render_cleaner(ui),
-                                        Tab::Memory => self.render_memory(ui),
-                                        Tab::Power => self.render_power(ui),
-                                        Tab::Protection => self.render_protection(ui),
-                                    }
-                                });
-                        },
-                    );
                 });
+            });
+
+        // --- CỘT 2: NỘI DUNG TAB (FULL HEIGHT & FULL WIDTH CÒN LẠI) ---
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(p.bg_main).inner_margin(egui::Margin::same(10)))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        match self.current_tab {
+                            Tab::Scenarios => self.render_scenarios(ui),
+                            Tab::Criteria => self.render_criteria(ui),
+                            Tab::Dashboard => self.render_dashboard(ui),
+                            Tab::Cleaner => self.render_cleaner(ui),
+                            Tab::Memory => self.render_memory(ui),
+                            Tab::Power => self.render_power(ui),
+                            Tab::Protection => self.render_protection(ui),
+                        }
+                    });
             });
     }
 }
