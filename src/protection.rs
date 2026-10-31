@@ -14,6 +14,7 @@ pub struct DiskInfo {
 }
 
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct ProtectionOverview {
     pub device_name: String,
     pub disks: Vec<DiskInfo>,

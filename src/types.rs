@@ -8,6 +8,13 @@ pub enum Tab {
     Protection,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleanTier {
+    Safe,
+    Developer,
+    SystemMaintenance,
+}
+
 #[derive(Debug, Clone)]
 pub struct JunkCategory {
     pub name: String,
@@ -15,6 +22,7 @@ pub struct JunkCategory {
     pub size_bytes: u64,
     pub file_count: usize,
     pub selected: bool,
+    pub tier: CleanTier,
 }
 
 #[derive(Debug, Clone)]
@@ -38,4 +46,13 @@ pub struct BatteryDetails {
     pub discharge_rate_mw: u32,
     pub charge_rate_mw: u32,
     pub voltage_mv: u32,
+}
+
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub struct StartupAppItem {
+    pub name: String,
+    pub command: String,
+    pub location: String,
+    pub user: String,
 }

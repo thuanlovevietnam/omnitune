@@ -10,10 +10,11 @@ use crate::power::{
 };
 use crate::protection::{enable_hibernate_as_admin, get_protection_overview, ProtectionOverview};
 use crate::scenarios::{apply_scenario, Scenario};
+use crate::startup::{get_startup_apps, is_telemetry_active, toggle_telemetry};
 use crate::theme::{
     apply_theme, configure_fonts, ThemeMode, ThemePalette,
 };
-use crate::types::{BatteryDetails, JunkCategory, ProcessMemInfo, Tab};
+use crate::types::{BatteryDetails, CleanTier, JunkCategory, ProcessMemInfo, StartupAppItem, Tab};
 use eframe::egui::{self, Color32, CornerRadius, ProgressBar, RichText, Stroke, Vec2};
 use std::time::{Duration, Instant};
 use sysinfo::System;
@@ -38,6 +39,11 @@ pub struct OptimizerApp {
     // Cleaner state
     clean_categories: Vec<JunkCategory>,
     clean_status_msg: String,
+
+    // Startup & Telemetry state
+    startup_apps: Vec<StartupAppItem>,
+    is_telemetry_running: bool,
+    telemetry_status_msg: String,
 
     // Power settings
     brightness_level: u32,
@@ -116,8 +122,12 @@ impl OptimizerApp {
                 size_bytes: 0,
                 file_count: 0,
                 selected: true,
+                tier: t.tier,
             })
             .collect();
+
+        let startup_apps = get_startup_apps();
+        let is_telemetry_running = is_telemetry_active();
 
         Self {
             current_tab: Tab::Scenarios,
@@ -135,7 +145,10 @@ impl OptimizerApp {
             top_processes,
             protection,
             clean_categories,
-            clean_status_msg: "Sẵn sàng quét rác hệ thống.".to_string(),
+            clean_status_msg: "Sẵn sàng quét rác hệ thống (Đã phân 3 tầng rác).".to_string(),
+            startup_apps,
+            is_telemetry_running,
+            telemetry_status_msg: String::new(),
             brightness_level,
             cpu_limit_dc: 80,
             power_status_msg: String::new(),
@@ -354,7 +367,7 @@ impl eframe::App for OptimizerApp {
                     render_tab_button(ui, &mut self.current_tab, Tab::Cleaner, "🧹 Dọn rác", &p);
                     render_tab_button(ui, &mut self.current_tab, Tab::Memory, "🧠 RAM", &p);
                     render_tab_button(ui, &mut self.current_tab, Tab::Power, "🔋 Pin & ACPI", &p);
-                    render_tab_button(ui, &mut self.current_tab, Tab::Protection, "🛡️ Bảo vệ", &p);
+                    render_tab_button(ui, &mut self.current_tab, Tab::Protection, "🚀 Khởi động & Bảo vệ", &p);
                 });
 
                 ui.add_space(6.0);
@@ -711,9 +724,9 @@ impl OptimizerApp {
     fn render_cleaner(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
-        ui.heading(RichText::new("🧹 Dọn dẹp rác & Cache hệ thống").size(16.0).strong().color(p.text_primary));
+        ui.heading(RichText::new("🧹 Dọn dẹp rác 3 tầng & Cache hệ thống").size(16.0).strong().color(p.text_primary));
         ui.label(
-            RichText::new("Quét và dọn các file tạm, cache ứng dụng để giải phóng SSD.")
+            RichText::new("Phân loại 3 tầng: Rác an toàn 100%, Cache lập trình viên (NPM/Go/Rust) và Bảo trì hệ thống.")
                 .size(12.0)
                 .color(p.text_secondary),
         );
@@ -721,7 +734,7 @@ impl OptimizerApp {
 
         ui.horizontal(|ui| {
             let scan_btn = egui::Button::new(
-                RichText::new("🔍 Quét rác").size(12.5).strong().color(Color32::WHITE),
+                RichText::new("🔍 Quét toàn bộ").size(12.5).strong().color(Color32::WHITE),
             )
             .fill(p.primary_btn)
             .corner_radius(CornerRadius::same(5));
@@ -739,8 +752,76 @@ impl OptimizerApp {
                 self.clean_status_msg = format!("✓ Quét xong! Tìm thấy {}.", format_bytes(total_size));
             }
 
+            let clean_safe_btn = egui::Button::new(
+                RichText::new("🛡️ Dọn Rác An Toàn (Tầng 1)").size(12.5).strong().color(Color32::WHITE),
+            )
+            .fill(Color32::from_rgb(16, 120, 60))
+            .corner_radius(CornerRadius::same(5));
+
+            if ui.add(clean_safe_btn).clicked() {
+                let targets = get_default_targets();
+                let mut freed_total = 0u64;
+                let mut files_total = 0usize;
+
+                for target in &targets {
+                    if target.tier == CleanTier::Safe {
+                        let (f_bytes, f_count) = clean_target(target);
+                        freed_total += f_bytes;
+                        files_total += f_count;
+                    }
+                }
+
+                for (i, target) in targets.iter().enumerate() {
+                    let (size, count) = scan_target(target);
+                    if let Some(cat) = self.clean_categories.get_mut(i) {
+                        cat.size_bytes = size;
+                        cat.file_count = count;
+                    }
+                }
+
+                self.clean_status_msg = format!(
+                    "✓ Đã dọn an toàn {} ({} files).",
+                    format_bytes(freed_total),
+                    files_total
+                );
+            }
+
+            let clean_dev_btn = egui::Button::new(
+                RichText::new("💻 Dọn Dev Cache (Tầng 2)").size(12.5).strong().color(Color32::WHITE),
+            )
+            .fill(Color32::from_rgb(147, 51, 234))
+            .corner_radius(CornerRadius::same(5));
+
+            if ui.add(clean_dev_btn).clicked() {
+                let targets = get_default_targets();
+                let mut freed_total = 0u64;
+                let mut files_total = 0usize;
+
+                for target in &targets {
+                    if target.tier == CleanTier::Developer {
+                        let (f_bytes, f_count) = clean_target(target);
+                        freed_total += f_bytes;
+                        files_total += f_count;
+                    }
+                }
+
+                for (i, target) in targets.iter().enumerate() {
+                    let (size, count) = scan_target(target);
+                    if let Some(cat) = self.clean_categories.get_mut(i) {
+                        cat.size_bytes = size;
+                        cat.file_count = count;
+                    }
+                }
+
+                self.clean_status_msg = format!(
+                    "✓ Đã dọn Dev Cache {} ({} files).",
+                    format_bytes(freed_total),
+                    files_total
+                );
+            }
+
             let clean_btn = egui::Button::new(
-                RichText::new("🗑️ Dọn sạch").size(12.5).strong().color(Color32::WHITE),
+                RichText::new("🗑️ Dọn tất cả đã chọn").size(12.5).strong().color(Color32::WHITE),
             )
             .fill(p.danger_red)
             .corner_radius(CornerRadius::same(5));
@@ -788,27 +869,42 @@ impl OptimizerApp {
 
         ui.add_space(8.0);
 
-        p.modern_card(ui, |ui| {
-            for cat in &mut self.clean_categories {
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut cat.selected, "");
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new(&cat.name).size(13.0).strong().color(p.text_primary));
-                        ui.label(RichText::new(&cat.path_desc).size(11.0).color(p.text_secondary));
-                    });
+        // Group by Tiers: Safe, Developer, SystemMaintenance
+        let tiers = [
+            (CleanTier::Safe, "🛡️ TẦNG 1: RÁC AN TOÀN 100% (TEMP & BROWSER)", p.success_green),
+            (CleanTier::Developer, "💻 TẦNG 2: RÁC PHÁT TRIỂN PHẦN MỀM (NPM, GO, RUST CACHE)", Color32::from_rgb(168, 85, 247)),
+            (CleanTier::SystemMaintenance, "⚙️ TẦNG 3: BẢO TRÌ HỆ THỐNG SÂU (UPDATE & PREFETCH)", p.warn_amber),
+        ];
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let text = if cat.size_bytes > 0 {
-                            format!("{} ({} f)", format_bytes(cat.size_bytes), cat.file_count)
-                        } else {
-                            "0 B".to_string()
-                        };
-                        ui.label(RichText::new(text).size(12.5).strong().color(p.accent_blue));
-                    });
-                });
+        for (tier, header, color) in tiers {
+            p.modern_card(ui, |ui| {
+                ui.label(RichText::new(header).size(12.0).strong().color(color));
                 ui.separator();
-            }
-        });
+
+                for cat in &mut self.clean_categories {
+                    if cat.tier == tier {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut cat.selected, "");
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new(&cat.name).size(13.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(&cat.path_desc).size(11.0).color(p.text_secondary));
+                            });
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let text = if cat.size_bytes > 0 {
+                                    format!("{} ({} f)", format_bytes(cat.size_bytes), cat.file_count)
+                                } else {
+                                    "0 B".to_string()
+                                };
+                                ui.label(RichText::new(text).size(12.5).strong().color(p.accent_blue));
+                            });
+                        });
+                        ui.separator();
+                    }
+                }
+            });
+            ui.add_space(6.0);
+        }
     }
 
     fn render_memory(&mut self, ui: &mut egui::Ui) {
@@ -1081,19 +1177,109 @@ impl OptimizerApp {
     fn render_protection(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
-        ui.heading(RichText::new("🛡️ Bảo vệ máy & Giám sát").size(16.0).strong().color(p.text_primary));
+        ui.heading(RichText::new("🚀 Khởi động & Bảo vệ máy").size(16.0).strong().color(p.text_primary));
         ui.label(
-            RichText::new("Bảo vệ ổ SSD NVMe, chế độ ngủ đông và tuổi thọ pin.")
+            RichText::new("Quản lý ứng dụng khởi động, chặn Telemetry ngầm của Windows, bảo vệ SSD và Pin.")
                 .size(12.0)
                 .color(p.text_secondary),
         );
+        ui.add_space(8.0);
+
+        // Windows Telemetry Debloat Card
+        p.modern_card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("🛡️ WINDOWS TELEMETRY & DIATTRACK (CHỐNG THEO DÕI NỀN)").size(13.0).strong().color(p.accent_blue));
+                    ui.label(
+                        RichText::new("Dịch vụ DiagTrack âm thầm thu thập nhật ký và gửi về Microsoft, tiêu tốn CPU và I/O ổ đĩa nền.")
+                            .size(11.5)
+                            .color(p.text_secondary),
+                    );
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if self.is_telemetry_running {
+                        let btn = egui::Button::new(
+                            RichText::new("Tắt DiagTrack (Admin)").size(12.0).strong().color(Color32::WHITE),
+                        )
+                        .fill(p.danger_red)
+                        .corner_radius(CornerRadius::same(5));
+
+                        if ui.add(btn).clicked() {
+                            let _ = toggle_telemetry(true);
+                            self.is_telemetry_running = false;
+                            self.telemetry_status_msg = "✓ Đã gửi lệnh vô hiệu hóa DiagTrack.".to_string();
+                        }
+                    } else {
+                        let btn = egui::Button::new(
+                            RichText::new("Bật lại DiagTrack").size(12.0).strong().color(Color32::WHITE),
+                        )
+                        .fill(Color32::from_rgb(16, 120, 60))
+                        .corner_radius(CornerRadius::same(5));
+
+                        if ui.add(btn).clicked() {
+                            let _ = toggle_telemetry(false);
+                            self.is_telemetry_running = true;
+                            self.telemetry_status_msg = "✓ Đã bật lại DiagTrack.".to_string();
+                        }
+                    }
+                });
+            });
+
+            if !self.telemetry_status_msg.is_empty() {
+                ui.add_space(4.0);
+                ui.label(RichText::new(&self.telemetry_status_msg).size(12.0).color(p.success_green));
+            }
+        });
+
+        ui.add_space(8.0);
+
+        // Startup Applications List Card
+        p.modern_card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("ỨNG DỤNG KHỞI ĐỘNG CÙNG WINDOWS").size(12.5).strong().color(p.accent_blue));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(RichText::new("🔄 Làm mới").size(11.5)).clicked() {
+                        self.startup_apps = get_startup_apps();
+                    }
+                });
+            });
+            ui.separator();
+            ui.add_space(2.0);
+
+            egui::Grid::new("startup_grid")
+                .striped(true)
+                .min_col_width(70.0)
+                .spacing(Vec2::new(14.0, 5.0))
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Tên ứng dụng").size(11.5).strong().color(p.text_secondary));
+                    ui.label(RichText::new("Vị trí đăng ký").size(11.5).strong().color(p.text_secondary));
+                    ui.label(RichText::new("Lệnh khởi động").size(11.5).strong().color(p.text_secondary));
+                    ui.end_row();
+
+                    for app in &self.startup_apps {
+                        ui.label(RichText::new(&app.name).size(11.5).strong().color(p.text_primary));
+                        let short_loc = if app.location.contains("Startup") {
+                            "Folder Startup".to_string()
+                        } else if app.location.contains("HKLM") {
+                            "Registry HKLM".to_string()
+                        } else {
+                            "Registry HKCU".to_string()
+                        };
+                        ui.label(RichText::new(short_loc).size(11.5).color(p.accent_blue));
+                        ui.label(RichText::new(&app.command).size(11.0).color(p.text_secondary));
+                        ui.end_row();
+                    }
+                });
+        });
+
         ui.add_space(8.0);
 
         // Hibernate Protection Card
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Chế độ ngủ đông (Hibernate)").size(13.5).strong().color(p.text_primary));
+                    ui.label(RichText::new("Chế độ ngủ đông (Hibernate)").size(13.0).strong().color(p.text_primary));
                     ui.label(
                         RichText::new("Khi gập máy, Hibernate ngắt điện 100%, chống sụt pin.")
                             .size(11.5)
@@ -1164,28 +1350,6 @@ impl OptimizerApp {
             ui.add_space(2.0);
             ui.label(
                 RichText::new("Nếu cắm sạc thường xuyên tại bàn làm việc, hãy bật 'Battery Charge Threshold' (ngưỡng 75-80%) trong phần mềm quản lý pin để tránh sạc nhồi điện áp cao, chống phù pin và tăng tuổi thọ.")
-                    .size(11.5)
-                    .color(p.text_secondary),
-            );
-        });
-
-        ui.add_space(8.0);
-
-        // Startup apps Card
-        p.modern_card(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "Khởi động cùng Windows: {} ứng dụng",
-                        self.protection.startup_apps_count
-                    ))
-                    .size(12.0)
-                    .strong()
-                    .color(p.text_primary),
-                );
-            });
-            ui.label(
-                RichText::new("💡 Tắt bớt ứng dụng đồng bộ đám mây và điều khiển từ xa để mở máy nhanh hơn.")
                     .size(11.5)
                     .color(p.text_secondary),
             );

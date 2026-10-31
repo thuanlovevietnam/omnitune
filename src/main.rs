@@ -8,6 +8,7 @@ mod memory;
 mod power;
 mod protection;
 mod scenarios;
+mod startup;
 mod theme;
 mod types;
 
