@@ -12,6 +12,7 @@ mod scenarios;
 mod startup;
 mod theme;
 mod types;
+mod licensing;
 
 use app::OptimizerApp;
 use eframe::NativeOptions;

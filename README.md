@@ -52,6 +52,18 @@ Thay vì buộc người dùng phải tự làm kỹ sư hệ thống với hàn
 
 ---
 
+## 💎 Mô hình Bản quyền & Kiếm tiền (Monetization)
+OmniTune được thiết kế theo mô hình **Freemium Pro ($9 Trọn đời)**:
+- **Bản Miễn phí:** Auto-Pilot tự nhận diện, dọn rác an toàn Tầng 1, theo dõi pin và CPU.
+- **Bản Pro VIP:** Mở khóa dọn rác Developer (NPM, Cargo, Go 3.6GB+), Timer 1.0ms tối ưu game & remote, khóa sạc pin 80%, không giới hạn.
+- **Tạo Key cho khách hàng:** Sử dụng công cụ `generate_key.py`:
+  ```bash
+  python generate_key.py khachhang@gmail.com
+  ```
+- **Landing Page bán hàng:** Nằm tại thư mục `website/index.html` (sẵn sàng deploy lên GitHub Pages hoặc Vercel).
+
+---
+
 ## 🛠️ Hướng dẫn cài đặt & Biên dịch
 
 ### Yêu cầu:

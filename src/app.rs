@@ -4,6 +4,7 @@ use crate::cleaner::{
     clean_target, format_bytes, get_default_targets, scan_target,
 };
 use crate::eco_qos::{apply_foreground_boost_and_eco, get_foreground_process};
+use crate::licensing::{deactivate_license, load_license, save_license, LicenseData};
 use crate::memory::{
     get_memory_stats, get_top_processes, terminate_process, trim_single_process, trim_working_sets,
     MemStats,
@@ -64,6 +65,13 @@ pub struct OptimizerApp {
 
     // Power settings
     brightness_level: u32,
+
+    // Licensing state
+    license: LicenseData,
+    show_license_modal: bool,
+    input_license_email: String,
+    input_license_key: String,
+    license_feedback_msg: String,
 
     // Dynamic hardware info
     cpu_cores_info: String,
@@ -136,6 +144,7 @@ impl OptimizerApp {
         let cpu_limit_ac = get_cpu_max_state_ac();
         let cooling_active = get_cooling_policy();
         let gamedvr_enabled = get_gamedvr();
+        let license = load_license();
 
         Self {
             current_tab: Tab::Widget,
@@ -163,6 +172,11 @@ impl OptimizerApp {
             cooling_active,
             gamedvr_enabled,
             brightness_level,
+            license,
+            show_license_modal: false,
+            input_license_email: String::new(),
+            input_license_key: String::new(),
+            license_feedback_msg: String::new(),
             cpu_cores_info,
             quick_opt_msg: String::new(),
             last_refresh: Instant::now(),
@@ -382,6 +396,25 @@ impl OptimizerApp {
 
                 ui.add_space(4.0);
 
+                // Pro / License status button
+                if self.license.is_valid {
+                    let pro_badge = egui::Button::new(RichText::new("★ PRO").size(11.5).strong().color(Color32::WHITE))
+                        .fill(Color32::from_rgb(217, 119, 6))
+                        .corner_radius(CornerRadius::same(5));
+                    if ui.add(pro_badge).on_hover_text(format!("OmniTune Pro: {}", self.license.licensee)).clicked() {
+                        self.show_license_modal = !self.show_license_modal;
+                    }
+                } else {
+                    let buy_btn = egui::Button::new(RichText::new("★ Lên PRO").size(11.5).strong().color(Color32::WHITE))
+                        .fill(p.warn_amber)
+                        .corner_radius(CornerRadius::same(5));
+                    if ui.add(buy_btn).on_hover_text("Nâng cấp lên bản OmniTune Pro").clicked() {
+                        self.show_license_modal = !self.show_license_modal;
+                    }
+                }
+
+                ui.add_space(4.0);
+
                 // Theme toggle
                 let (theme_text, theme_hover) = if self.theme_mode == ThemeMode::Dark {
                     ("Sáng", "Chuyển giao diện Sáng")
@@ -405,6 +438,63 @@ impl OptimizerApp {
         });
 
         ui.add_space(8.0);
+
+        // --- LICENSE ACTIVATION CARD ---
+        if self.show_license_modal {
+            p.modern_card(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("★ BẢN QUYỀN OMNITUNE PRO").size(13.0).strong().color(p.warn_amber));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(RichText::new("✕ Đóng").size(11.0)).clicked() {
+                            self.show_license_modal = false;
+                        }
+                    });
+                });
+                ui.separator();
+                ui.label(RichText::new("Mở khóa vĩnh viễn: Dọn sạch NPM/Cargo cache hàng chục GB, Timer 1.0ms tối ưu game, khóa ngưỡng sạc pin 80%.").size(11.0).color(p.text_secondary));
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Email:").size(11.5).strong().color(p.text_primary));
+                    ui.add(egui::TextEdit::singleline(&mut self.input_license_email).hint_text("Nhập email mua hàng...").desired_width(180.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Key:").size(11.5).strong().color(p.text_primary));
+                    ui.add(egui::TextEdit::singleline(&mut self.input_license_key).hint_text("OTPRO-XXXX-XXXX-XXXX").desired_width(180.0));
+                });
+
+                ui.horizontal(|ui| {
+                    let activate_btn = egui::Button::new(RichText::new("✓ Kích hoạt").size(11.5).strong().color(Color32::WHITE))
+                        .fill(p.primary_btn);
+                    if ui.add(activate_btn).clicked() {
+                        if save_license(&self.input_license_email, &self.input_license_key) {
+                            self.license = load_license();
+                            self.license_feedback_msg = "✓ Kích hoạt OmniTune Pro thành công! Cảm ơn bạn.".to_string();
+                            self.autonomous.log("[VIP]", "Đã kích hoạt bản quyền OmniTune Pro vĩnh viễn.".to_string());
+                        } else {
+                            self.license_feedback_msg = "✗ Mã bản quyền không hợp lệ. Vui lòng kiểm tra lại.".to_string();
+                        }
+                    }
+
+                    if self.license.is_valid {
+                        if ui.button(RichText::new("Hủy kích hoạt").size(11.0)).clicked() {
+                            deactivate_license();
+                            self.license = load_license();
+                            self.license_feedback_msg = "Đã hủy kích hoạt bản quyền.".to_string();
+                        }
+                    }
+                });
+
+                ui.add_space(2.0);
+                ui.label(RichText::new("💡 Master Key dùng thử offline: OTPRO-LIFETIME-VIP-2026").size(10.5).color(p.accent_blue));
+
+                if !self.license_feedback_msg.is_empty() {
+                    ui.add_space(2.0);
+                    ui.label(RichText::new(&self.license_feedback_msg).size(11.0).strong().color(p.warn_amber));
+                }
+            });
+            ui.add_space(6.0);
+        }
 
         // --- HEALTH & CONTEXT BANNER CARD ---
         let (score, score_label, score_color, tips) = self.calculate_health_score();
@@ -876,18 +966,31 @@ impl OptimizerApp {
                 self.clean_status_msg = format!("✓ Đã dọn an toàn {}.", format_bytes(freed));
             }
 
-            let clean_dev_btn = egui::Button::new(RichText::new("Dọn Dev Cache (NPM/Go)").size(12.0).color(Color32::WHITE))
-                .fill(Color32::from_rgb(147, 51, 234));
+            let dev_btn_text = if self.license.is_valid {
+                "Dọn Dev Cache (NPM/Go)"
+            } else {
+                "★ [PRO] Dọn Dev Cache"
+            };
+
+            let clean_dev_btn = egui::Button::new(RichText::new(dev_btn_text).size(12.0).color(Color32::WHITE))
+                .fill(if self.license.is_valid { Color32::from_rgb(147, 51, 234) } else { p.warn_amber });
+
             if ui.add(clean_dev_btn).clicked() {
-                let targets = get_default_targets();
-                let mut freed = 0u64;
-                for target in &targets {
-                    if target.tier == CleanTier::Developer {
-                        let (f, _) = clean_target(target);
-                        freed += f;
+                if !self.license.is_valid {
+                    self.show_license_modal = true;
+                    self.current_tab = Tab::Widget;
+                    self.license_feedback_msg = "Tính năng dọn cache lập trình viên (NPM/Go hàng GB) chỉ có trên OmniTune Pro. Nhập key hoặc kích hoạt để mở khóa!".to_string();
+                } else {
+                    let targets = get_default_targets();
+                    let mut freed = 0u64;
+                    for target in &targets {
+                        if target.tier == CleanTier::Developer {
+                            let (f, _) = clean_target(target);
+                            freed += f;
+                        }
                     }
+                    self.clean_status_msg = format!("✓ Đã dọn Dev Cache {}.", format_bytes(freed));
                 }
-                self.clean_status_msg = format!("✓ Đã dọn Dev Cache {}.", format_bytes(freed));
             }
         });
 
