@@ -38,7 +38,7 @@ impl AutonomousEngine {
             auto_ram_enabled: true,
         };
 
-        engine.log("🚀", "Hệ thống tự hành OmniTune Auto-Pilot đã khởi động.".to_string());
+        engine.log("[START]", "Hệ thống tự hành OmniTune Auto-Pilot đã khởi động.".to_string());
         engine
     }
 
@@ -72,9 +72,9 @@ impl AutonomousEngine {
                     let _ = set_brightness(45);
                     self.current_scenario = Scenario::CafeMobility;
                     self.log(
-                        "🔋",
+                        "[PIN]",
                         format!(
-                            "Rút sạc (Pin {}%) -> Tự động kích hoạt Tiết kiệm pin: CPU 65% (~4W), quạt 0dB, màn hình 45%.",
+                            "Rút sạc (Pin {}%) -> Tự động tiết kiệm pin: CPU 65% (~4W), quạt 0dB, màn hình 45%.",
                             battery_pct
                         ),
                     );
@@ -85,8 +85,8 @@ impl AutonomousEngine {
                     let _ = set_brightness(70);
                     self.current_scenario = Scenario::Default;
                     self.log(
-                        "🔌",
-                        "Cắm sạc AC -> Tự động khôi phục xung nhịp CPU 100%, quạt tản nhiệt chủ động và sạc pin.".to_string(),
+                        "[NGUỒN]",
+                        "Cắm sạc AC -> Tự động khôi phục xung nhịp CPU 100%, quạt tản nhiệt chủ động.".to_string(),
                     );
                 }
             }
@@ -106,14 +106,14 @@ impl AutonomousEngine {
                 if let Some((_, ref name)) = fg {
                     if eco_count > 0 {
                         self.log(
-                            "🍃",
+                            "[ECO]",
                             format!(
                                 "Tập trung '{}' (Nâng ưu tiên, ép EcoQoS hạ tải {} app nền).",
                                 name, eco_count
                             ),
                         );
                     } else if boosted > 0 {
-                        self.log("🎯", format!("Tập trung '{}' (Đã cấp luồng ưu tiên cao).", name));
+                        self.log("[FOCUS]", format!("Tập trung '{}' (Đã cấp luồng ưu tiên cao).", name));
                     }
                 }
             }
@@ -124,7 +124,7 @@ impl AutonomousEngine {
                     if target_scen != self.current_scenario {
                         self.current_scenario = target_scen;
                         let msg = apply_scenario(target_scen, sys);
-                        self.log("🤖", format!("Tự động chuyển [{}]: {}", target_scen.name(), msg));
+                        self.log("[CHUYỂN]", format!("Chuyển sang [{}]: {}", target_scen.name(), msg));
                     }
                 }
             }
@@ -134,9 +134,8 @@ impl AutonomousEngine {
         if self.auto_ram_enabled && ram_load_pct >= 80 {
             let (freed, count) = trim_working_sets(sys);
             if freed > 10 * 1024 * 1024 {
-                // Chỉ log khi thu hồi được > 10MB
                 self.log(
-                    "🧠",
+                    "[RAM]",
                     format!(
                         "RAM chạm {}% -> Tự động thu hồi {} bộ nhớ nhàn rỗi từ {} tiến trình.",
                         ram_load_pct,

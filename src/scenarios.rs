@@ -27,12 +27,12 @@ pub enum Scenario {
 impl Scenario {
     pub fn name(&self) -> &'static str {
         match self {
-            Scenario::Default => "Cân bằng tiêu chuẩn",
-            Scenario::RemoteDesktop => "🖥️ Điều khiển từ xa (Remote)",
-            Scenario::Gaming => "🎮 Chơi Game & Đồ họa",
-            Scenario::CafeMobility => "☕ Cà phê / Siêu tiết kiệm pin",
-            Scenario::Developer => "💻 Lập trình & Biên dịch",
-            Scenario::MediaChill => "🎬 Xem phim & Thư giãn",
+            Scenario::Default => "[Cân bằng] Mặc định Windows",
+            Scenario::RemoteDesktop => "[Remote] Điều khiển từ xa",
+            Scenario::Gaming => "[Gaming] Game & Đồ họa",
+            Scenario::CafeMobility => "[Pin] Cà phê / Tiết kiệm",
+            Scenario::Developer => "[Dev] Lập trình & Biên dịch",
+            Scenario::MediaChill => "[Media] Xem phim & Thư giãn",
         }
     }
 
