@@ -476,6 +476,7 @@ impl eframe::App for OptimizerApp {
                 // Tab Navigation Bar
                 ui.horizontal(|ui| {
                     render_tab_button(ui, &mut self.current_tab, Tab::Scenarios, "🎯 Kịch bản", &p);
+                    render_tab_button(ui, &mut self.current_tab, Tab::Criteria, "📋 Tiêu chí setup", &p);
                     render_tab_button(ui, &mut self.current_tab, Tab::Dashboard, "📊 Tổng quan", &p);
                     render_tab_button(ui, &mut self.current_tab, Tab::Cleaner, "🧹 Dọn rác", &p);
                     render_tab_button(ui, &mut self.current_tab, Tab::Memory, "🧠 RAM & Tiến trình", &p);
@@ -491,6 +492,7 @@ impl eframe::App for OptimizerApp {
                     .show(ui, |ui| {
                         match self.current_tab {
                             Tab::Scenarios => self.render_scenarios(ui),
+                            Tab::Criteria => self.render_criteria(ui),
                             Tab::Dashboard => self.render_dashboard(ui),
                             Tab::Cleaner => self.render_cleaner(ui),
                             Tab::Memory => self.render_memory(ui),
@@ -526,7 +528,14 @@ impl OptimizerApp {
                 ui.label(RichText::new(format!("Đang chạy: {}", self.current_scenario.name())).size(12.0).strong().color(p.accent_blue));
             });
         });
-        ui.add_space(6.0);
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            if ui.button(RichText::new("📋 Xem bảng ma trận 10 tiêu chí setup chi tiết (2 Cột) ->").size(11.5).strong().color(p.accent_blue)).clicked() {
+                self.current_tab = Tab::Criteria;
+            }
+        });
+        ui.add_space(4.0);
 
         if !self.scenario_status_msg.is_empty() {
             p.modern_card(ui, |ui| {
@@ -621,6 +630,218 @@ impl OptimizerApp {
                 ui.label(RichText::new(details).size(11.5).color(p.text_secondary));
             });
 
+            ui.add_space(4.0);
+        }
+    }
+
+    fn render_criteria(&mut self, ui: &mut egui::Ui) {
+        let p = self.palette;
+
+        ui.horizontal(|ui| {
+            ui.heading(
+                RichText::new("📋 Bảng Tiêu Chí Setup & Kiến Nghị Tối Ưu")
+                    .size(16.0)
+                    .strong()
+                    .color(p.text_primary),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let btn = egui::Button::new(
+                    RichText::new("🎯 Đến trang Kịch bản").size(11.5).strong().color(Color32::WHITE),
+                )
+                .fill(p.primary_btn)
+                .corner_radius(CornerRadius::same(5));
+
+                if ui.add(btn).clicked() {
+                    self.current_tab = Tab::Scenarios;
+                }
+            });
+        });
+
+        ui.label(
+            RichText::new(
+                "Ma trận đối chiếu 10 tiêu chí phần cứng, công cụ Win32/ACPI và chính sách tối ưu tương ứng theo từng kịch bản.",
+            )
+            .size(12.0)
+            .color(p.text_secondary),
+        );
+        ui.add_space(6.0);
+
+        // Header Row for the 2-column table
+        p.modern_card(ui, |ui| {
+            ui.columns(2, |cols| {
+                cols[0].label(
+                    RichText::new("📌 CỘT 1: TIÊU CHÍ PHẦN CỨNG / HỆ THỐNG")
+                        .size(12.5)
+                        .strong()
+                        .color(p.accent_blue),
+                );
+                cols[1].label(
+                    RichText::new("🛠️ CỘT 2: CÔNG CỤ SETUP & KIẾN NGHỊ TỐI ƯU")
+                        .size(12.5)
+                        .strong()
+                        .color(p.accent_blue),
+                );
+            });
+        });
+        ui.add_space(4.0);
+
+        type RecPair = (&'static str, &'static str);
+        let criteria_list: [(usize, &'static str, &'static str, &'static str, &'static str, &'static [RecPair]); 10] = [
+            (
+                1,
+                "⚡",
+                "Xung nhịp & Điện năng CPU",
+                "Xung nhịp Core i7-7600U (50% - 100%), trần Turbo Boost, giới hạn công suất TDP (15W - 25W).",
+                "powercfg (PROCTHROTTLEMAX / PROCTHROTTLEMIN)",
+                &[
+                    ("Cà phê / Pin", "Khóa 60% (~4W). Triệt tiêu nhiệt độ, máy mát lạnh, thời lượng pin tối đa."),
+                    ("Remote Desktop", "Khóa 65%. Máy 40°C, quạt 0dB, nhường QuickSync giải mã video stream."),
+                    ("Gaming", "Khóa 90% (2.8GHz). Nhường 12W TDP cho GPU Intel HD 620 đạt 1150MHz, chống tụt FPS."),
+                    ("Developer", "Mở 100% Turbo Boost (3.9GHz). Tối đa tốc độ build code đa luồng."),
+                ],
+            ),
+            (
+                2,
+                "⏱️",
+                "Độ trễ Timer & Khung hình",
+                "Chu kỳ ngắt thời gian thực của nhân hệ điều hành Windows Kernel (15.6ms vs 1.0ms).",
+                "Win32 timeBeginPeriod(1) / timeEndPeriod(1)",
+                &[
+                    ("Gaming / Remote", "Ép Timer xuống 1.0ms. Triệt tiêu giật khung hình (micro-stutter) và trễ con trỏ chuột."),
+                    ("Pin / Mặc định", "15.6ms tiêu chuẩn. Giảm chu kỳ wake CPU không cần thiết, bảo toàn pin."),
+                ],
+            ),
+            (
+                3,
+                "🍃",
+                "Điều phối App nền (EcoQoS)",
+                "Quản lý luồng xử lý và mức tiêu thụ điện của các tiến trình Foreground vs Background.",
+                "SetProcessInformation (ProcessPowerThrottling) & SetPriorityClass",
+                &[
+                    ("App đang Focus", "Nâng ABOVE_NORMAL_PRIORITY, gỡ bỏ hoàn toàn giới hạn xung nhịp."),
+                    ("App chạy ngầm", "Ép cờ EcoQoS + IDLE_PRIORITY (Drive, OneDrive, tab browser nền), chặn hao pin trộm."),
+                ],
+            ),
+            (
+                4,
+                "🧠",
+                "Bộ nhớ RAM & Shared VRAM",
+                "Thu hồi trang nhớ nhàn rỗi (Working Set) và mở rộng bộ nhớ đồ họa chia sẻ cho iGPU.",
+                "Win32 K32EmptyWorkingSet & K32GetProcessMemoryInfo",
+                &[
+                    ("Gaming", "Thu hồi Working Set app nền trước khi chơi, mở rộng dung lượng Shared VRAM cho iGPU."),
+                    ("Developer", "Thu hồi RAM trước khi compile code để rustc/cargo đọc ghi file nhanh nhất."),
+                    ("Tự động hóa", "Tự động kích hoạt dọn Working Set khi RAM toàn hệ thống vượt ngưỡng 85%."),
+                ],
+            ),
+            (
+                5,
+                "🌐",
+                "Băng thông & Độ trễ mạng",
+                "Độ trễ gói tin TCP (Jitter/Ping) và phân bổ băng thông đường truyền điều khiển.",
+                "netsh int tcp set global autotuninglevel=normal & Background Freeze",
+                &[
+                    ("Remote Desktop", "Đóng băng app sync ngầm (Google Drive, OneDrive), tối ưu TCP ACK buffer, triệt tiêu jitter và độ trễ chuột."),
+                    ("Gaming", "Ưu tiên băng thông mạng cho game, ổn định kết nối."),
+                ],
+            ),
+            (
+                6,
+                "🔌",
+                "Quản lý Nguồn & Giữ màn hình",
+                "Cơ chế tự động khóa màn hình và rơi vào trạng thái ngủ (Sleep/Lock) của Windows.",
+                "Win32 SetThreadExecutionState (ES_SYSTEM / ES_DISPLAY)",
+                &[
+                    ("Remote / Xem phim", "Kích hoạt ES_SYSTEM_REQUIRED + ES_DISPLAY_REQUIRED. Chống khóa màn hình / sleep làm ngắt kết nối remote hay gián đoạn video."),
+                    ("Di động", "Trả về ES_CONTINUOUS cho phép timeout tắt màn hình tiết kiệm điện."),
+                ],
+            ),
+            (
+                7,
+                "❄️",
+                "Chính sách Tản nhiệt (Quạt)",
+                "Hành vi điều khiển quạt tản nhiệt của bo mạch chủ (Active vs Passive Cooling Policy).",
+                "powercfg (SYSCOOLPOL)",
+                &[
+                    ("Remote / Cà phê", "Chế độ Passive. Tắt quạt tản nhiệt, tiết kiệm 1.5W - 2W điện nuôi mô-tơ, êm ru 0dB."),
+                    ("Gaming / Dev", "Chế độ Active. Cho quạt quay sớm để tản nhiệt trước khi chạm trần hãm xung."),
+                ],
+            ),
+            (
+                8,
+                "🔆",
+                "Độ sáng Màn hình",
+                "Mức tiêu thụ điện của panel màn hình LED (chiếm 30% - 50% tổng điện laptop).",
+                "WMI ACPI WmiSetBrightness",
+                &[
+                    ("Cà phê / Pin", "Đặt 40% - 45% (ngưỡng ngọt ngào nhất của pin laptop)."),
+                    ("Remote / Văn phòng", "Đặt 50% vừa mắt, dễ chịu khi làm việc lâu."),
+                    ("Xem phim", "Đặt 70% tăng độ tương phản và hình ảnh sống động."),
+                ],
+            ),
+            (
+                9,
+                "🎬",
+                "Đồ họa nền & Quay màn hình",
+                "Bộ mã hóa phần cứng của GPU tích hợp Intel HD Graphics.",
+                "Registry HKCU\\...\\GameDVR (AppCaptureEnabled)",
+                &[
+                    ("Gaming", "Tắt GameDVR (0). Giải phóng bộ mã hóa phần cứng của GPU Intel HD 620, tránh tụt frame."),
+                    ("Thường / Mặc định", "Bật lại (1) theo mặc định của Windows."),
+                ],
+            ),
+            (
+                10,
+                "🛡️",
+                "Bảo vệ Tuổi thọ Phần cứng",
+                "Chống phù rộp pin kép, chống cạn pin qua đêm và bảo vệ ổ SSD NVMe.",
+                "Lenovo PM Service (IBMPMSVC) & powercfg /hibernate on",
+                &[
+                    ("Ngưỡng sạc Pin", "Bật ngắt sạc ở 80% khi cắm nguồn liên tục tại bàn làm việc để chống phồng rộp và chai pin."),
+                    ("Ngủ đông", "Dùng Hibernate thay vì Sleep S3. Cắt điện hoàn toàn khi gập máy, chống cạn pin qua đêm."),
+                ],
+            ),
+        ];
+
+        for (id, icon, name, scope, tool_badge, recs) in criteria_list {
+            p.modern_card(ui, |ui| {
+                ui.columns(2, |cols| {
+                    // CỘT 1: TIÊU CHÍ PHẦN CỨNG / HỆ THỐNG
+                    cols[0].vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!("{}. {} {}", id, icon, name))
+                                    .size(13.0)
+                                    .strong()
+                                    .color(p.text_primary),
+                            );
+                        });
+                        ui.add_space(2.0);
+                        ui.label(RichText::new(scope).size(11.5).color(p.text_secondary));
+                    });
+
+                    // CỘT 2: CÔNG CỤ SETUP & KIẾN NGHỊ TỐI ƯU
+                    cols[1].vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Công cụ:").size(11.5).strong().color(p.text_secondary));
+                            ui.label(
+                                RichText::new(tool_badge)
+                                    .size(11.5)
+                                    .strong()
+                                    .color(p.accent_blue),
+                            );
+                        });
+                        ui.add_space(2.0);
+                        for (scen_label, desc) in recs {
+                            ui.label(
+                                RichText::new(format!("• {}: {}", scen_label, desc))
+                                    .size(11.5)
+                                    .color(p.text_secondary),
+                            );
+                        }
+                    });
+                });
+            });
             ui.add_space(4.0);
         }
     }

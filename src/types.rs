@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tab {
     Scenarios,
+    Criteria,
     Dashboard,
     Cleaner,
     Memory,
