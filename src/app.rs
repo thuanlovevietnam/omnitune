@@ -432,9 +432,9 @@ impl eframe::App for OptimizerApp {
 
         let p = self.palette;
 
-        // --- CỘT 1: SIDEBAR TABS (185px - FULL HEIGHT 100% CẢ CHIỀU DỌC) ---
+        // --- CỘT 1: SIDEBAR TABS (175px - FULL HEIGHT 100% CẢ CHIỀU DỌC) ---
         egui::Panel::left("left_sidebar")
-            .exact_size(185.0)
+            .exact_size(175.0)
             .resizable(false)
             .frame(
                 egui::Frame::new()
@@ -562,6 +562,7 @@ impl eframe::App for OptimizerApp {
                             Tab::Power => self.render_power(ui),
                             Tab::Protection => self.render_protection(ui),
                         }
+                        ui.add_space(36.0);
                     });
             });
     }
@@ -740,10 +741,10 @@ impl OptimizerApp {
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.allocate_ui_with_layout(
-                    Vec2::new(160.0, 0.0),
+                    Vec2::new(140.0, 0.0),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
-                        ui.set_width(160.0);
+                        ui.set_width(140.0);
                         ui.label(
                             RichText::new("📌 TIÊU CHÍ")
                                 .size(12.0)
@@ -772,8 +773,8 @@ impl OptimizerApp {
         // --- ROW 1: CPU XUNG NHỊP & TDP ---
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(160.0);
+                ui.allocate_ui_with_layout(Vec2::new(140.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(140.0);
                     ui.label(RichText::new("1. ⚡ Xung CPU & TDP").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
                     ui.label(RichText::new("i7-7600U (50-100%), trần Turbo, TDP 15-25W.").size(11.0).color(p.text_secondary));
@@ -830,8 +831,8 @@ impl OptimizerApp {
         // --- ROW 2: TIMER RESOLUTION ---
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(160.0);
+                ui.allocate_ui_with_layout(Vec2::new(140.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(140.0);
                     ui.label(RichText::new("2. ⏱️ Timer & FPS").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
                     ui.label(RichText::new("Chu kỳ ngắt nhân Kernel (15.6ms vs 1.0ms tối ưu).").size(11.0).color(p.text_secondary));
@@ -872,8 +873,8 @@ impl OptimizerApp {
         // --- ROW 3: ECOQOS BACKGROUND THROTTLING ---
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(160.0);
+                ui.allocate_ui_with_layout(Vec2::new(140.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(140.0);
                     ui.label(RichText::new("3. 🍃 EcoQoS App Nền").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
                     ui.label(RichText::new("Ép tiến trình chạy ngầm vào chế độ tiết kiệm điện.").size(11.0).color(p.text_secondary));
@@ -902,8 +903,8 @@ impl OptimizerApp {
         // --- ROW 4: RAM WORKING SET & AUTO TRIM ---
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(160.0);
+                ui.allocate_ui_with_layout(Vec2::new(140.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(140.0);
                     ui.label(RichText::new("4. 🧠 RAM & Shared VRAM").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
                     ui.label(RichText::new("Thu hồi Working Set nhàn rỗi, mở rộng VRAM cho iGPU.").size(11.0).color(p.text_secondary));
@@ -934,8 +935,8 @@ impl OptimizerApp {
         // --- ROW 5: NETWORK BUFFER & SYNC FREEZE ---
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(160.0);
+                ui.allocate_ui_with_layout(Vec2::new(140.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(140.0);
                     ui.label(RichText::new("5. 🌐 Băng thông & Mạng").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
                     ui.label(RichText::new("TCP buffer & đóng băng sync chống nghẽn đường truyền.").size(11.0).color(p.text_secondary));
@@ -973,8 +974,8 @@ impl OptimizerApp {
         // --- ROW 6: SLEEP & DISPLAY LOCK ---
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(160.0);
+                ui.allocate_ui_with_layout(Vec2::new(140.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(140.0);
                     ui.label(RichText::new("6. 🔌 Chống Sleep / Khóa").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
                     ui.label(RichText::new("Giữ máy/màn hình luôn sáng khi remote/xem video.").size(11.0).color(p.text_secondary));
@@ -1010,8 +1011,8 @@ impl OptimizerApp {
         // --- ROW 7: FAN & COOLING POLICY ---
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(160.0);
+                ui.allocate_ui_with_layout(Vec2::new(140.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(140.0);
                     ui.label(RichText::new("7. ❄️ Quạt tản nhiệt").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
                     ui.label(RichText::new("Chế độ làm mát bo mạch chủ (Active vs Passive).").size(11.0).color(p.text_secondary));
@@ -1052,8 +1053,8 @@ impl OptimizerApp {
         // --- ROW 8: DISPLAY BRIGHTNESS ---
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(160.0);
+                ui.allocate_ui_with_layout(Vec2::new(140.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(140.0);
                     ui.label(RichText::new("8. 🔆 Độ sáng Màn hình").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
                     ui.label(RichText::new("Mức tiêu thụ panel LED (chiếm 30-50% tổng điện pin).").size(11.0).color(p.text_secondary));
@@ -1092,8 +1093,8 @@ impl OptimizerApp {
         // --- ROW 9: GAMEDVR BACKGROUND CAPTURE ---
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(160.0);
+                ui.allocate_ui_with_layout(Vec2::new(140.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(140.0);
                     ui.label(RichText::new("9. 🎬 Windows GameDVR").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
                     ui.label(RichText::new("Quay màn hình nền giải phóng encoder GPU Intel.").size(11.0).color(p.text_secondary));
@@ -1134,8 +1135,8 @@ impl OptimizerApp {
         // --- ROW 10: BATTERY THRESHOLD & HIBERNATE ---
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(160.0);
+                ui.allocate_ui_with_layout(Vec2::new(140.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(140.0);
                     ui.label(RichText::new("10. 🛡️ Ngưỡng sạc & Ngủ đông").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
                     ui.label(RichText::new("Khóa sạc 80% chống phồng pin & ngủ đông Hibernate.").size(11.0).color(p.text_secondary));

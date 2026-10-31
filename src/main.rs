@@ -41,10 +41,10 @@ fn main() -> eframe::Result {
             )
         };
 
-        let w = 820.0f32.min(screen_w - 20.0);
-        let h = (screen_h - 10.0).max(520.0);
+        let w = 740.0f32.min(screen_w - 30.0);
+        let h = 570.0f32.min(screen_h - 40.0).max(480.0);
         let x = ((screen_w - w) / 2.0).max(0.0);
-        let y = 5.0f32;
+        let y = ((screen_h - h) / 2.0).max(0.0);
         (x, y, w, h)
     };
 
@@ -52,7 +52,7 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Glow,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([win_w, win_h])
-            .with_min_inner_size([680.0, 480.0])
+            .with_min_inner_size([640.0, 460.0])
             .with_position([pos_x, pos_y])
             .with_title("OmniTune - Universal System & Hardware Optimizer"),
         ..Default::default()
