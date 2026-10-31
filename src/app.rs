@@ -657,7 +657,7 @@ impl OptimizerApp {
         }
     }
 
-fn render_criteria(&mut self, ui: &mut egui::Ui) {
+    fn render_criteria(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
         ui.horizontal(|ui| {
@@ -682,7 +682,7 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
 
         ui.label(
             RichText::new(
-                "Cột 1: Tiêu chí phần cứng / hệ thống • Cột 2: Bộ tinh chỉnh thông số tương tác trực tiếp & kiến nghị tối ưu.",
+                "Cột 1: Tiêu chí phần cứng (gọn gàng) • Cột 2: Bộ tinh chỉnh thông số tương tác trực tiếp & kiến nghị tối ưu.",
             )
             .size(12.0)
             .color(p.text_secondary),
@@ -698,18 +698,32 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
 
         // Header Row for the 2-column table
         p.modern_card(ui, |ui| {
-            ui.columns(2, |cols| {
-                cols[0].label(
-                    RichText::new("📌 CỘT 1: TIÊU CHÍ PHẦN CỨNG / HỆ THỐNG")
-                        .size(12.5)
-                        .strong()
-                        .color(p.accent_blue),
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(
+                    Vec2::new(160.0, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_width(160.0);
+                        ui.label(
+                            RichText::new("📌 TIÊU CHÍ")
+                                .size(12.0)
+                                .strong()
+                                .color(p.accent_blue),
+                        );
+                    },
                 );
-                cols[1].label(
-                    RichText::new("🛠️ CỘT 2: TINH CHỈNH THÔNG SỐ TRỰC TIẾP & KIẾN NGHỊ")
-                        .size(12.5)
-                        .strong()
-                        .color(p.accent_blue),
+                ui.separator();
+                ui.allocate_ui_with_layout(
+                    Vec2::new(ui.available_width(), 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.label(
+                            RichText::new("🛠️ TINH CHỈNH THÔNG SỐ TRỰC TIẾP & KIẾN NGHỊ TỐI ƯU")
+                                .size(12.0)
+                                .strong()
+                                .color(p.accent_blue),
+                        );
+                    },
                 );
             });
         });
@@ -717,54 +731,57 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
 
         // --- ROW 1: CPU XUNG NHỊP & TDP ---
         p.modern_card(ui, |ui| {
-            ui.columns(2, |cols| {
-                cols[0].vertical(|ui| {
-                    ui.label(RichText::new("1. ⚡ Xung nhịp & Điện năng CPU").size(13.0).strong().color(p.text_primary));
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(160.0);
+                    ui.label(RichText::new("1. ⚡ Xung CPU & TDP").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
-                    ui.label(RichText::new("Khóa trần % CPU i7-7600U, kiểm soát TDP ăn điện (15W - 25W) và nhiệt độ tỏa ra.").size(11.5).color(p.text_secondary));
+                    ui.label(RichText::new("i7-7600U (50-100%), trần Turbo, TDP 15-25W.").size(11.0).color(p.text_secondary));
                 });
-
-                cols[1].vertical(|ui| {
+                ui.separator();
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Công cụ:").size(11.0).color(p.text_secondary));
                         ui.label(RichText::new("powercfg PROCTHROTTLEMAX").size(11.0).strong().color(p.accent_blue));
                     });
 
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Khi dùng pin (DC):").size(11.5).strong().color(p.text_primary));
+                        ui.label(RichText::new("Pin (DC):").size(11.5).strong().color(p.text_primary));
                         if ui.add(egui::Slider::new(&mut self.cpu_limit_dc, 50..=100).suffix("%")).changed() {
                             let _ = set_cpu_max_state_dc(self.cpu_limit_dc);
                             self.criteria_feedback_msg = format!("✓ Đã áp dụng trần CPU pin: {}%", self.cpu_limit_dc);
                         }
-                    });
-
-                    ui.horizontal(|ui| {
-                        if ui.button(RichText::new("60% Pin trâu").size(10.5)).clicked() {
+                        if ui.button(RichText::new("60% Pin").size(10.5)).clicked() {
                             self.cpu_limit_dc = 60;
                             let _ = set_cpu_max_state_dc(60);
-                            self.criteria_feedback_msg = "✓ Đã khóa CPU pin 60% (~4W) siêu tiết kiệm.".to_string();
                         }
-                        if ui.button(RichText::new("80% Cân bằng").size(10.5)).clicked() {
+                        if ui.button(RichText::new("80%").size(10.5)).clicked() {
                             self.cpu_limit_dc = 80;
                             let _ = set_cpu_max_state_dc(80);
-                            self.criteria_feedback_msg = "✓ Đã đặt CPU pin 80% (tắt Turbo 25W).".to_string();
                         }
-                        if ui.button(RichText::new("100% Turbo").size(10.5)).clicked() {
+                        if ui.button(RichText::new("100%").size(10.5)).clicked() {
                             self.cpu_limit_dc = 100;
                             let _ = set_cpu_max_state_dc(100);
-                            self.criteria_feedback_msg = "✓ Đã mở tối đa 100% Turbo pin.".to_string();
                         }
                     });
 
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Khi cắm sạc (AC):").size(11.5).strong().color(p.text_primary));
+                        ui.label(RichText::new("Sạc (AC):").size(11.5).strong().color(p.text_primary));
                         if ui.add(egui::Slider::new(&mut self.cpu_limit_ac, 50..=100).suffix("%")).changed() {
                             let _ = set_cpu_max_state_ac(self.cpu_limit_ac);
                             self.criteria_feedback_msg = format!("✓ Đã áp dụng trần CPU sạc: {}%", self.cpu_limit_ac);
                         }
+                        if ui.button(RichText::new("80% Mát").size(10.5)).clicked() {
+                            self.cpu_limit_ac = 80;
+                            let _ = set_cpu_max_state_ac(80);
+                        }
+                        if ui.button(RichText::new("100% Turbo").size(10.5)).clicked() {
+                            self.cpu_limit_ac = 100;
+                            let _ = set_cpu_max_state_ac(100);
+                        }
                     });
 
-                    ui.label(RichText::new("💡 Kiến nghị: Pin: 60-80% để triệt tiêu Turbo 25W; Sạc: 100% để max xung 3.9GHz.").size(11.0).color(p.text_secondary));
+                    ui.label(RichText::new("💡 Kiến nghị: Pin 60-80% để triệt tiêu Turbo 25W; Sạc 100% để max xung 3.9GHz.").size(11.0).color(p.text_secondary));
                 });
             });
         });
@@ -772,14 +789,15 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
 
         // --- ROW 2: TIMER RESOLUTION ---
         p.modern_card(ui, |ui| {
-            ui.columns(2, |cols| {
-                cols[0].vertical(|ui| {
-                    ui.label(RichText::new("2. ⏱️ Độ trễ Timer & Khung hình").size(13.0).strong().color(p.text_primary));
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(160.0);
+                    ui.label(RichText::new("2. ⏱️ Timer & FPS").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
-                    ui.label(RichText::new("Chu kỳ ngắt thời gian thực Windows Kernel (15.6ms mặc định vs 1.0ms tối ưu).").size(11.5).color(p.text_secondary));
+                    ui.label(RichText::new("Chu kỳ ngắt nhân Kernel (15.6ms vs 1.0ms tối ưu).").size(11.0).color(p.text_secondary));
                 });
-
-                cols[1].vertical(|ui| {
+                ui.separator();
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Công cụ:").size(11.0).color(p.text_secondary));
                         ui.label(RichText::new("Win32 timeBeginPeriod(1)").size(11.0).strong().color(p.accent_blue));
@@ -813,14 +831,15 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
 
         // --- ROW 3: ECOQOS BACKGROUND THROTTLING ---
         p.modern_card(ui, |ui| {
-            ui.columns(2, |cols| {
-                cols[0].vertical(|ui| {
-                    ui.label(RichText::new("3. 🍃 Điều phối App nền (EcoQoS)").size(13.0).strong().color(p.text_primary));
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(160.0);
+                    ui.label(RichText::new("3. 🍃 EcoQoS App Nền").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
-                    ui.label(RichText::new("Quản lý luồng xử lý và năng lượng Foreground Boost vs Background Throttling.").size(11.5).color(p.text_secondary));
+                    ui.label(RichText::new("Ép tiến trình chạy ngầm vào chế độ tiết kiệm điện.").size(11.0).color(p.text_secondary));
                 });
-
-                cols[1].vertical(|ui| {
+                ui.separator();
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Công cụ:").size(11.0).color(p.text_secondary));
                         ui.label(RichText::new("SetProcessInformation (ProcessPowerThrottling)").size(11.0).strong().color(p.accent_blue));
@@ -842,14 +861,15 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
 
         // --- ROW 4: RAM WORKING SET & AUTO TRIM ---
         p.modern_card(ui, |ui| {
-            ui.columns(2, |cols| {
-                cols[0].vertical(|ui| {
-                    ui.label(RichText::new("4. 🧠 Bộ nhớ RAM & Shared VRAM").size(13.0).strong().color(p.text_primary));
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(160.0);
+                    ui.label(RichText::new("4. 🧠 RAM & Shared VRAM").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
-                    ui.label(RichText::new("Thu hồi trang nhớ nhàn rỗi (Working Set), mở rộng dung lượng VRAM chia sẻ cho iGPU.").size(11.5).color(p.text_secondary));
+                    ui.label(RichText::new("Thu hồi Working Set nhàn rỗi, mở rộng VRAM cho iGPU.").size(11.0).color(p.text_secondary));
                 });
-
-                cols[1].vertical(|ui| {
+                ui.separator();
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Công cụ:").size(11.0).color(p.text_secondary));
                         ui.label(RichText::new("Win32 K32EmptyWorkingSet").size(11.0).strong().color(p.accent_blue));
@@ -873,14 +893,15 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
 
         // --- ROW 5: NETWORK BUFFER & SYNC FREEZE ---
         p.modern_card(ui, |ui| {
-            ui.columns(2, |cols| {
-                cols[0].vertical(|ui| {
-                    ui.label(RichText::new("5. 🌐 Băng thông & Độ trễ mạng").size(13.0).strong().color(p.text_primary));
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(160.0);
+                    ui.label(RichText::new("5. 🌐 Băng thông & Mạng").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
-                    ui.label(RichText::new("Độ trễ gói tin TCP (Jitter/Ping) và phân bổ băng thông đường truyền điều khiển.").size(11.5).color(p.text_secondary));
+                    ui.label(RichText::new("TCP buffer & đóng băng sync chống nghẽn đường truyền.").size(11.0).color(p.text_secondary));
                 });
-
-                cols[1].vertical(|ui| {
+                ui.separator();
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Công cụ:").size(11.0).color(p.text_secondary));
                         ui.label(RichText::new("netsh int tcp & Background Freeze").size(11.0).strong().color(p.accent_blue));
@@ -893,7 +914,7 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
                                 .status();
                             self.criteria_feedback_msg = "✓ Đã tối ưu TCP ACK buffer giảm độ trễ mạng.".to_string();
                         }
-                        if ui.button(RichText::new("⏸️ Đóng băng Cloud Sync").size(11.0)).clicked() {
+                        if ui.button(RichText::new("⏸️ Đóng băng Sync").size(11.0)).clicked() {
                             let c = crate::scenarios::prioritize_apps(&mut self.sys, &["GoogleDriveFS", "OneDrive", "SearchIndexer"], windows_sys::Win32::System::Threading::IDLE_PRIORITY_CLASS);
                             self.criteria_feedback_msg = format!("✓ Đã hạ ưu tiên {} app sync để nhường mạng.", c);
                         }
@@ -911,14 +932,15 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
 
         // --- ROW 6: SLEEP & DISPLAY LOCK ---
         p.modern_card(ui, |ui| {
-            ui.columns(2, |cols| {
-                cols[0].vertical(|ui| {
-                    ui.label(RichText::new("6. 🔌 Chống Sleep & Tắt màn hình").size(13.0).strong().color(p.text_primary));
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(160.0);
+                    ui.label(RichText::new("6. 🔌 Chống Sleep / Khóa").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
-                    ui.label(RichText::new("Ngăn Windows tự khóa màn hình hoặc rơi vào trạng thái ngủ khi remote / xem phim.").size(11.5).color(p.text_secondary));
+                    ui.label(RichText::new("Giữ máy/màn hình luôn sáng khi remote/xem video.").size(11.0).color(p.text_secondary));
                 });
-
-                cols[1].vertical(|ui| {
+                ui.separator();
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Công cụ:").size(11.0).color(p.text_secondary));
                         ui.label(RichText::new("Win32 SetThreadExecutionState").size(11.0).strong().color(p.accent_blue));
@@ -947,14 +969,15 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
 
         // --- ROW 7: FAN & COOLING POLICY ---
         p.modern_card(ui, |ui| {
-            ui.columns(2, |cols| {
-                cols[0].vertical(|ui| {
-                    ui.label(RichText::new("7. ❄️ Chính sách Quạt tản nhiệt").size(13.0).strong().color(p.text_primary));
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(160.0);
+                    ui.label(RichText::new("7. ❄️ Quạt tản nhiệt").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
-                    ui.label(RichText::new("Hành vi điều khiển quạt làm mát của bo mạch chủ (Active vs Passive Cooling Policy).").size(11.5).color(p.text_secondary));
+                    ui.label(RichText::new("Chế độ làm mát bo mạch chủ (Active vs Passive).").size(11.0).color(p.text_secondary));
                 });
-
-                cols[1].vertical(|ui| {
+                ui.separator();
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Công cụ:").size(11.0).color(p.text_secondary));
                         ui.label(RichText::new("powercfg SYSCOOLPOL").size(11.0).strong().color(p.accent_blue));
@@ -988,14 +1011,15 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
 
         // --- ROW 8: DISPLAY BRIGHTNESS ---
         p.modern_card(ui, |ui| {
-            ui.columns(2, |cols| {
-                cols[0].vertical(|ui| {
-                    ui.label(RichText::new("8. 🔆 Độ sáng Màn hình").size(13.0).strong().color(p.text_primary));
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(160.0);
+                    ui.label(RichText::new("8. 🔆 Độ sáng Màn hình").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
-                    ui.label(RichText::new("Mức tiêu thụ điện của panel màn hình LED (chiếm 30% - 50% tổng điện laptop).").size(11.5).color(p.text_secondary));
+                    ui.label(RichText::new("Mức tiêu thụ panel LED (chiếm 30-50% tổng điện pin).").size(11.0).color(p.text_secondary));
                 });
-
-                cols[1].vertical(|ui| {
+                ui.separator();
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Công cụ:").size(11.0).color(p.text_secondary));
                         ui.label(RichText::new("WMI ACPI WmiSetBrightness").size(11.0).strong().color(p.accent_blue));
@@ -1027,14 +1051,15 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
 
         // --- ROW 9: GAMEDVR BACKGROUND CAPTURE ---
         p.modern_card(ui, |ui| {
-            ui.columns(2, |cols| {
-                cols[0].vertical(|ui| {
-                    ui.label(RichText::new("9. 🎬 Windows GameDVR nền").size(13.0).strong().color(p.text_primary));
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(160.0);
+                    ui.label(RichText::new("9. 🎬 Windows GameDVR").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
-                    ui.label(RichText::new("Bộ mã hóa phần cứng của GPU tích hợp Intel HD Graphics.").size(11.5).color(p.text_secondary));
+                    ui.label(RichText::new("Quay màn hình nền giải phóng encoder GPU Intel.").size(11.0).color(p.text_secondary));
                 });
-
-                cols[1].vertical(|ui| {
+                ui.separator();
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Công cụ:").size(11.0).color(p.text_secondary));
                         ui.label(RichText::new("Registry GameDVR (AppCaptureEnabled)").size(11.0).strong().color(p.accent_blue));
@@ -1068,14 +1093,15 @@ fn render_criteria(&mut self, ui: &mut egui::Ui) {
 
         // --- ROW 10: BATTERY THRESHOLD & HIBERNATE ---
         p.modern_card(ui, |ui| {
-            ui.columns(2, |cols| {
-                cols[0].vertical(|ui| {
-                    ui.label(RichText::new("10. 🛡️ Ngưỡng sạc Pin & Ngủ đông").size(13.0).strong().color(p.text_primary));
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(Vec2::new(160.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(160.0);
+                    ui.label(RichText::new("10. 🛡️ Ngưỡng sạc & Ngủ đông").size(12.5).strong().color(p.text_primary));
                     ui.add_space(2.0);
-                    ui.label(RichText::new("Chống phù rộp pin kép, chống cạn pin qua đêm và bảo vệ ổ SSD NVMe.").size(11.5).color(p.text_secondary));
+                    ui.label(RichText::new("Khóa sạc 80% chống phồng pin & ngủ đông Hibernate.").size(11.0).color(p.text_secondary));
                 });
-
-                cols[1].vertical(|ui| {
+                ui.separator();
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Công cụ:").size(11.0).color(p.text_secondary));
                         ui.label(RichText::new("Lenovo PM Service & powercfg /hibernate").size(11.0).strong().color(p.accent_blue));

@@ -19,7 +19,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() -> eframe::Result {
-    let win_w = 660.0;
+    let win_w = 720.0;
     let win_h = 530.0;
 
     let (pos_x, pos_y) = unsafe {
@@ -34,7 +34,7 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Glow,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([win_w, win_h])
-            .with_min_inner_size([580.0, 460.0])
+            .with_min_inner_size([620.0, 460.0])
             .with_position([pos_x, pos_y])
             .with_title("OmniTune - Universal System & Hardware Optimizer"),
         ..Default::default()
