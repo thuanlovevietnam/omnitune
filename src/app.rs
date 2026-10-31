@@ -11,7 +11,9 @@ use crate::power::{
     get_active_scheme_name, get_brightness, get_power_status, set_brightness, set_cpu_max_state_ac,
     set_cpu_max_state_dc, set_power_scheme, PowerStatus,
 };
-use crate::protection::{enable_hibernate_as_admin, get_protection_overview, ProtectionOverview};
+use crate::protection::{
+    enable_hibernate_as_admin, get_protection_overview, set_battery_threshold, ProtectionOverview,
+};
 use crate::scenarios::{apply_scenario, Scenario};
 use crate::startup::{get_startup_apps, is_telemetry_active, toggle_startup_item, toggle_telemetry};
 use crate::theme::{
@@ -53,6 +55,7 @@ pub struct OptimizerApp {
     is_telemetry_running: bool,
     telemetry_status_msg: String,
     startup_action_msg: String,
+    battery_thresh_msg: String,
 
     // Power settings
     brightness_level: u32,
@@ -83,7 +86,7 @@ impl OptimizerApp {
 
         let mem_stats = get_memory_stats();
         let mut power_status = get_power_status();
-        let top_processes = get_top_processes(&mut sys, 20);
+        let top_processes = get_top_processes(&mut sys, 25);
         let dual_batteries = get_dual_battery_info();
         let cpu_usage = sys.global_cpu_usage();
         let protection = get_protection_overview(cpu_usage);
@@ -162,6 +165,7 @@ impl OptimizerApp {
             is_telemetry_running,
             telemetry_status_msg: String::new(),
             startup_action_msg: String::new(),
+            battery_thresh_msg: String::new(),
             brightness_level,
             cpu_limit_dc: 80,
             power_status_msg: String::new(),
@@ -172,6 +176,59 @@ impl OptimizerApp {
             last_refresh: Instant::now(),
             last_battery_poll: Instant::now(),
         }
+    }
+
+    fn calculate_health_score(&self) -> (u32, &'static str, Color32) {
+        let mut score = 100i32;
+
+        // RAM load penalty
+        if self.mem_stats.load_percent >= 85 {
+            score -= 20;
+        } else if self.mem_stats.load_percent >= 70 {
+            score -= 10;
+        }
+
+        // Junk size penalty
+        let total_junk: u64 = self.clean_categories.iter().map(|c| c.size_bytes).sum();
+        if total_junk > 2 * 1024 * 1024 * 1024 {
+            score -= 20;
+        } else if total_junk > 500 * 1024 * 1024 {
+            score -= 10;
+        }
+
+        // Telemetry penalty
+        if self.is_telemetry_running {
+            score -= 10;
+        }
+
+        // Hibernate penalty on laptop
+        if !self.protection.is_hibernate_enabled {
+            score -= 10;
+        }
+
+        // Battery wear penalty
+        let max_wear = self
+            .dual_batteries
+            .iter()
+            .map(|b| b.wear_percent)
+            .fold(0.0f32, f32::max);
+        if max_wear >= 30.0 {
+            score -= 10;
+        }
+
+        let final_score = score.clamp(0, 100) as u32;
+
+        let (label, color) = if final_score >= 90 {
+            ("XUẤT SẮC (Tối ưu hóa hoàn hảo)", self.palette.success_green)
+        } else if final_score >= 75 {
+            ("TỐT (Máy hoạt động ổn định)", self.palette.accent_blue)
+        } else if final_score >= 60 {
+            ("TRUNG BÌNH (Cần dọn dẹp & tối ưu)", self.palette.warn_amber)
+        } else {
+            ("CẦN TỐI ƯU (Nhiều rác & app nền)", self.palette.danger_red)
+        };
+
+        (final_score, label, color)
     }
 
     fn refresh_periodic(&mut self) {
@@ -254,20 +311,51 @@ impl OptimizerApp {
     }
 
     fn run_quick_optimize(&mut self) {
+        // 1. Clean Tier 1 Safe Junk
+        let targets = get_default_targets();
+        let mut freed_junk = 0u64;
+        let mut deleted_files = 0usize;
+        for target in &targets {
+            if target.tier == CleanTier::Safe {
+                let (f_bytes, f_count) = clean_target(target);
+                freed_junk += f_bytes;
+                deleted_files += f_count;
+            }
+        }
+
+        // 2. Rescan junk categories
+        for (i, target) in targets.iter().enumerate() {
+            let (size, count) = scan_target(target);
+            if let Some(cat) = self.clean_categories.get_mut(i) {
+                cat.size_bytes = size;
+                cat.file_count = count;
+            }
+        }
+
+        // 3. Trim RAM
         let (freed_ram, count) = trim_working_sets(&mut self.sys);
+
+        // 4. Power Scheme & Throttling
         let _ = set_cpu_max_state_dc(80);
         if !self.power_status.is_ac_online {
             let _ = set_power_scheme("SCHEME_MAX");
         }
+
+        // 5. EcoQoS
         if self.eco_qos_enabled {
             let _ = apply_foreground_boost_and_eco(
                 &self.sys,
                 self.foreground_info.as_ref().map(|(pid, _)| *pid),
             );
         }
+
         self.mem_stats = get_memory_stats();
+        self.top_processes = get_top_processes(&mut self.sys, 25);
+
         self.quick_opt_msg = format!(
-            "✓ Đã tối ưu! Thu hồi {} RAM từ {} tiến trình & kích hoạt EcoQoS app nền.",
+            "✓ Tối ưu toàn diện thành công! Dọn {} rác ({} files), thu hồi {} RAM từ {} tiến trình & bật EcoQoS.",
+            format_bytes(freed_junk),
+            deleted_files,
             format_bytes(freed_ram),
             count
         );
@@ -540,6 +628,52 @@ impl OptimizerApp {
     fn render_dashboard(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
+        // PC Health Score Card
+        let (score, score_label, score_color) = self.calculate_health_score();
+        p.modern_card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("CHỈ SỐ SỨC KHỎE HỆ THỐNG (PC HEALTH SCORE)").size(11.5).strong().color(p.accent_blue));
+                    ui.horizontal(|ui| {
+                        ui.heading(RichText::new(format!("{}/100", score)).size(28.0).strong().color(score_color));
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(score_label).size(12.5).strong().color(score_color));
+                            let hint = if score >= 90 {
+                                "Hệ thống đang hoạt động ở trạng thái tối ưu lý tưởng."
+                            } else {
+                                "Khuyến nghị bấm 'Tối ưu toàn diện' để dọn rác và giải phóng RAM."
+                            };
+                            ui.label(RichText::new(hint).size(11.0).color(p.text_secondary));
+                        });
+                    });
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let opt_btn = egui::Button::new(
+                        RichText::new("⚡ TỐI ƯU TOÀN DIỆN").size(13.0).strong().color(Color32::WHITE),
+                    )
+                    .fill(p.primary_btn)
+                    .corner_radius(CornerRadius::same(6));
+
+                    if ui.add(opt_btn).clicked() {
+                        self.run_quick_optimize();
+                    }
+                });
+            });
+
+            if !self.quick_opt_msg.is_empty() {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(&self.quick_opt_msg)
+                        .size(11.5)
+                        .color(p.success_green)
+                        .strong(),
+                );
+            }
+        });
+
+        ui.add_space(8.0);
+
         // Metric Cards Row
         ui.columns(3, |cols| {
             // CPU Card
@@ -666,44 +800,6 @@ impl OptimizerApp {
                     }
                 });
             });
-        });
-
-        ui.add_space(8.0);
-
-        // 1-Click Optimize Banner Card
-        p.modern_card(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.heading(RichText::new("⚡ Tối ưu 1-Click").size(15.0).strong().color(p.text_primary));
-                    ui.label(
-                        RichText::new("Thu hồi Working Set RAM và áp dụng EcoQoS cho các tiến trình chạy ngầm.")
-                            .size(12.0)
-                            .color(p.text_secondary),
-                    );
-                });
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let opt_btn = egui::Button::new(
-                        RichText::new("⚡ TỐI ƯU NGAY").size(13.0).strong().color(Color32::WHITE),
-                    )
-                    .fill(p.primary_btn)
-                    .corner_radius(CornerRadius::same(6));
-
-                    if ui.add(opt_btn).clicked() {
-                        self.run_quick_optimize();
-                    }
-                });
-            });
-
-            if !self.quick_opt_msg.is_empty() {
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(&self.quick_opt_msg)
-                        .size(12.5)
-                        .color(p.success_green)
-                        .strong(),
-                );
-            }
         });
 
         ui.add_space(8.0);
@@ -1408,6 +1504,111 @@ impl OptimizerApp {
 
         ui.add_space(8.0);
 
+        // S.M.A.R.T NVMe SSD Storage Card
+        p.modern_card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("SỨC KHỎE Ổ CỨNG SSD NVME (S.M.A.R.T)").size(12.5).strong().color(p.accent_blue));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let health_color = if self.protection.physical_disk_health == "Healthy" {
+                        p.success_green
+                    } else {
+                        p.warn_amber
+                    };
+                    ui.label(
+                        RichText::new(format!("Tình trạng: {} ({})", self.protection.physical_disk_health, self.protection.physical_disk_status))
+                            .size(12.0)
+                            .strong()
+                            .color(health_color),
+                    );
+                });
+            });
+            ui.separator();
+            ui.add_space(2.0);
+
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Tên phần cứng:").size(11.5).strong().color(p.text_secondary));
+                ui.label(RichText::new(&self.protection.physical_disk_name).size(11.5).strong().color(p.text_primary));
+            });
+
+            for disk in &self.protection.disks {
+                let used = disk.total_space.saturating_sub(disk.available_space);
+                let pct = if disk.total_space > 0 {
+                    (used as f32 / disk.total_space as f32) * 100.0
+                } else {
+                    0.0
+                };
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("Phân vùng {} ({})", disk.mount_point, disk.name)).size(11.5).strong().color(p.text_primary));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "Trống: {} / {}",
+                                format_bytes(disk.available_space),
+                                format_bytes(disk.total_space)
+                            ))
+                            .size(11.5)
+                            .color(p.text_secondary),
+                        );
+                    });
+                });
+
+                ui.add_space(2.0);
+                ui.add(ProgressBar::new(pct / 100.0).desired_height(12.0).text(format!("{:.1}% đã dùng", pct)));
+                ui.add_space(4.0);
+            }
+        });
+
+        ui.add_space(8.0);
+
+        // Lenovo Battery Charge Threshold Card (Interactive)
+        p.modern_card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("NGƯỠNG SẠC PIN 80% (BATTERY THRESHOLD)").size(13.0).strong().color(p.warn_amber));
+                    ui.label(
+                        RichText::new("Ngắt sạc khi pin đạt 80% để loại bỏ hiện tượng nhồi điện 4.2V liên tục, chống phù và kéo dài tuổi thọ.")
+                            .size(11.5)
+                            .color(p.text_secondary),
+                    );
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_text = if self.protection.battery_threshold_enabled {
+                        "Tắt ngưỡng sạc"
+                    } else {
+                        "Bật ngưỡng 80% (Admin)"
+                    };
+                    let btn_color = if self.protection.battery_threshold_enabled {
+                        p.danger_red
+                    } else {
+                        Color32::from_rgb(16, 120, 60)
+                    };
+
+                    let btn = egui::Button::new(RichText::new(btn_text).size(11.5).strong().color(Color32::WHITE))
+                        .fill(btn_color)
+                        .corner_radius(CornerRadius::same(5));
+
+                    if ui.add(btn).clicked() {
+                        let new_state = !self.protection.battery_threshold_enabled;
+                        let _ = set_battery_threshold(new_state, 80);
+                        self.protection.battery_threshold_enabled = new_state;
+                        self.battery_thresh_msg = format!(
+                            "✓ Đã gửi lệnh {} ngưỡng sạc 80% bảo vệ pin.",
+                            if new_state { "bật" } else { "tắt" }
+                        );
+                    }
+                });
+            });
+
+            if !self.battery_thresh_msg.is_empty() {
+                ui.add_space(2.0);
+                ui.label(RichText::new(&self.battery_thresh_msg).size(11.5).color(p.success_green));
+            }
+        });
+
+        ui.add_space(8.0);
+
         // Hibernate Protection Card
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
@@ -1436,56 +1637,6 @@ impl OptimizerApp {
                     }
                 });
             });
-        });
-
-        ui.add_space(8.0);
-
-        // NVMe Disk Storage Card
-        p.modern_card(ui, |ui| {
-            ui.label(RichText::new("SỨC KHỎE Ổ CỨNG SSD").size(12.0).strong().color(p.accent_blue));
-            ui.separator();
-            ui.add_space(2.0);
-
-            for disk in &self.protection.disks {
-                let used = disk.total_space.saturating_sub(disk.available_space);
-                let pct = if disk.total_space > 0 {
-                    (used as f32 / disk.total_space as f32) * 100.0
-                } else {
-                    0.0
-                };
-
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("Ổ {} ({})", disk.mount_point, disk.name)).size(12.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "Trống: {} / {}",
-                                format_bytes(disk.available_space),
-                                format_bytes(disk.total_space)
-                            ))
-                            .size(11.5)
-                            .color(p.text_secondary),
-                        );
-                    });
-                });
-
-                ui.add_space(2.0);
-                ui.add(ProgressBar::new(pct / 100.0).desired_height(12.0).text(format!("{:.1}%", pct)));
-                ui.add_space(4.0);
-            }
-        });
-
-        ui.add_space(8.0);
-
-        // Lenovo Battery Threshold Card
-        p.modern_card(ui, |ui| {
-            ui.label(RichText::new("KHUYẾN NGHỊ BẢO VỆ PIN (NGƯỠNG SẠC 80%)").size(12.0).strong().color(p.warn_amber));
-            ui.add_space(2.0);
-            ui.label(
-                RichText::new("Nếu cắm sạc thường xuyên tại bàn làm việc, hãy bật 'Battery Charge Threshold' (ngưỡng 75-80%) trong phần mềm quản lý pin để tránh sạc nhồi điện áp cao, chống phù pin và tăng tuổi thọ.")
-                    .size(11.5)
-                    .color(p.text_secondary),
-            );
         });
     }
 }
