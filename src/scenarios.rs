@@ -35,6 +35,7 @@ impl Scenario {
         }
     }
 
+    #[allow(dead_code)]
     pub fn description(&self) -> &'static str {
         match self {
             Scenario::Default => "Tự động điều tiết theo cơ chế tiêu chuẩn của Windows.",

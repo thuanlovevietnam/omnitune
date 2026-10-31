@@ -2,107 +2,65 @@
 
 Ứng dụng tối ưu hóa hệ thống, phần cứng và thời lượng pin chuyên sâu cho Windows (PC & Laptop), được viết 100% bằng **Rust** kết hợp Win32 API trực tiếp và GUI `egui/eframe`.
 
----
-
-## 🚀 Tính năng nổi bật
-
-### 1. 📊 Chỉ số Sức khỏe Hệ thống (PC Health Score) & Tối ưu 1-Click
-- **Đánh giá điểm số 0 - 100 điểm:** Tổng hợp tình trạng RAM, dung lượng rác SSD, độ chai pin, dịch vụ Telemetry và ứng dụng khởi động.
-- **Nút "⚡ TỐI ƯU TOÀN DIỆN" (1-Click):**
-  - Tự động dọn sạch rác an toàn Tầng 1.
-  - Thu hồi Working Set RAM toàn hệ thống.
-  - Áp dụng chế độ tiết kiệm điện EcoQoS cho các tiến trình nền.
-  - Tái chấm điểm nâng sức khỏe máy tính lên mức **Tối ưu 95 - 100/100**.
+Thiết kế theo mô hình **Tinh Gọn & Thông Minh (Streamlined Context-Aware Architecture)** với 4 phân hệ cốt lõi.
 
 ---
 
-### 2. 🎯 Tối ưu theo Kịch bản thực tế (Smart Scenarios) & Foreground EcoQoS
-Tự động tinh chỉnh CPU, GPU, bộ nhớ RAM, mạng và quyền ưu tiên tiến trình theo đúng tác vụ bạn đang làm:
+## 🚀 4 Phân Hệ Tinh Gọn Cốt Lõi
 
-- **Ứng dụng đang Focus (Foreground Auto-Boost):** Tự động phát hiện cửa sổ đang tương tác qua Win32 `GetForegroundWindow`, gỡ bỏ trần xung nhịp và nâng quyền ưu tiên luồng xử lý.
-- **EcoQoS (Windows Efficiency Mode):** Tự động áp dụng cờ điều tiết tiết kiệm điện `PROCESS_POWER_THROTTLING_EXECUTION_SPEED` cho các tiến trình chạy ngầm (Google Drive, OneDrive, tab trình duyệt nền, Search Indexer).
-- **🖥️ Điều khiển từ xa (Remote Desktop):**
-  - Khóa chống Sleep & Lock màn hình (`SetThreadExecutionState`).
-  - Khóa CPU 65% máy mát 40°C, quạt êm ru 0dB, thời lượng pin kéo dài 6 - 8 tiếng.
-  - Tối ưu TCP buffer qua `netsh` giảm trễ chuột cho **MiniRemote**, **RustDesk**, **RDP**.
-  - Tự động đóng băng các ứng dụng sync ngầm để nhường trọn băng thông điều khiển.
-- **🎮 Chơi Game & Đồ họa (Gaming Mode):**
-  - Windows Timer Resolution **1.0ms** (`timeBeginPeriod(1)`) triệt tiêu hiện tượng khựng khung hình (micro-stuttering) và trễ chuột.
-  - Tắt ngầm Windows GameDVR background capture (`AppCaptureEnabled = 0`) để giải phóng toàn bộ năng lực GPU.
-  - Cân bằng xung nhịp CPU 90% nhường trọn 12W điện năng cho GPU đạt đỉnh xung nhịp mà không bị hãm nhiệt.
-  - Thu hồi Working Set RAM để mở rộng dung lượng Shared VRAM.
-- **☕ Cà phê & Di động (Cafe / Siêu tiết kiệm pin):**
-  - Khóa trần CPU 60% chỉ tiêu thụ 3W - 5W điện năng.
-  - Tản nhiệt thụ động (Passive cooling - tắt quạt làm mát).
-  - Tự động đặt độ sáng 45% và đưa các dịch vụ nền xuống trạng thái nhàn rỗi.
-- **💻 Lập trình & Biên dịch (Developer):**
-  - Mở tối đa 100% Turbo Boost toàn bộ nhân/luồng.
-  - Quạt tản nhiệt quay chủ động để đẩy nhanh nhiệt khi biên dịch nặng.
-  - Tự động phát hiện và nâng quyền ưu tiên của `rustc`, `cargo`, `go`, `node` lên `HIGH_PRIORITY_CLASS`.
-  - Dọn sạch Working Set RAM để compiler đọc ghi file SSD NVMe nhanh nhất.
-- **🎬 Xem phim & Thư giãn (Media & Chill):**
-  - Khóa chống tắt màn hình và ngăn sleep khi đang xem video.
-  - CPU 55% im lặng tuyệt đối 0dB, nhường phần cứng GPU giải mã video 1080p/4K mượt mà.
-- **🤖 Tự động nhận diện thông minh (Smart Auto-Detect):**
-  - Tự động chuyển kịch bản tương ứng khi phát hiện mở MiniRemote/RustDesk, chạy lệnh compile hoặc khi pin sắp cạn.
+### 1. 🎯 Trung Tâm Thông Minh (Smart Center & Auto-Pilot)
+*Điều phối tự động toàn diện trên một giao diện trang chủ duy nhất:*
+- **Chỉ số Sức khỏe PC (Health Score 0-100):** Đánh giá tổng hợp kèm lời khuyên chẩn đoán thông minh (RAM cao, rác nhiều, cắm sạc liên tục cần bật ngưỡng pin 80%).
+- **Nút "⚡ TỐI ƯU TOÀN DIỆN" (1-Click):** Dọn rác an toàn Tầng 1 + Thu hồi RAM + Áp cờ EcoQoS cho các app nền + Cân bằng xung nhịp.
+- **3 Đồng hồ đo Thời gian thực:** CPU % (Chip & Nhân/Luồng) • RAM % (Đã dùng/Tổng/Trống) • Pin % (Công suất tiêu thụ thực tế theo Watt & Điện áp V).
+- **Cửa sổ Đang Focus (Foreground Auto-Boost):** Tự động phát hiện cửa sổ đang dùng, gỡ bỏ giới hạn xung nhịp và nâng quyền ưu tiên luồng xử lý (`ABOVE_NORMAL_PRIORITY_CLASS`).
+- **EcoQoS (Windows Efficiency Mode):** Tự động điều tiết tiết kiệm điện `PROCESS_POWER_THROTTLING_EXECUTION_SPEED` cho các app chạy ngầm (Drive, OneDrive, tab browser nền, Search Indexer).
+- **Bộ 5 Kịch bản Tinh chỉnh & Chế độ Auto-Pilot:**
+  - 🖥️ **Remote Desktop:** Khóa chống Sleep/Lock, CPU 65% máy mát 40°C không quạt 0dB, QuickSync giải mã video, tối ưu TCP buffer giảm trễ chuột, đóng băng app sync.
+  - 🎮 **Gaming & Đồ họa:** Timer 1.0ms (`timeBeginPeriod(1)`), tắt GameDVR nền, CPU 90% nhường 12W TDP cho GPU Intel HD 620 đạt 1150MHz, dọn RAM mở rộng VRAM.
+  - ☕ **Cà phê / Siêu tiết kiệm pin:** Khóa trần CPU 60% (~4W), quạt tắt (Passive), độ sáng 45%, đóng băng app ngầm.
+  - 💻 **Lập trình & Biên dịch (Developer):** 100% Turbo Boost 3.9GHz, quạt tản nhiệt chủ động, ưu tiên CPU cho `rustc`, `cargo`, `go`.
+  - 🎬 **Xem phim & Thư giãn:** Khóa chống tắt màn hình, CPU 55% êm ru 0dB, màn hình sáng 70%.
 
 ---
 
-### 3. 📋 Ma Trận 10 Tiêu Chí Setup & Kiến Nghị Tối Ưu
+### 2. 🎛️ Bảng Ma Trận Tinh Chỉnh (10-Criteria Tuning Matrix)
+*Khung bảng biểu hợp nhất 2 cột: Cột 1 Tiêu chí phần cứng (135px) • Cột 2 Điều khiển trực tiếp & Kiến nghị:*
 
-| Tiêu chí Phần cứng / Hệ thống | Công cụ setup & Mô tả kiến nghị tối ưu |
+| Tiêu chí | Công cụ setup & Tinh chỉnh tương tác trực tiếp |
 | :--- | :--- |
-| **1. Xung nhịp & Điện năng CPU** | • **Công cụ:** `powercfg` (`PROCTHROTTLEMAX`, `PROCTHROTTLEMIN`).<br>• **Kiến nghị:**<br>&nbsp;&nbsp;- *Cà phê/Pin:* Khóa 60% (~4W). Triệt tiêu nhiệt, kéo dài pin tối đa.<br>&nbsp;&nbsp;- *Remote Desktop:* Khóa 65%. Máy 40°C, quạt 0dB, QuickSync giải mã video.<br>&nbsp;&nbsp;- *Gaming:* Khóa 90% (2.8GHz). Nhường 12W TDP cho GPU Intel HD 620 đạt đỉnh 1150MHz, chống tụt FPS.<br>&nbsp;&nbsp;- *Developer:* Mở 100% Turbo Boost (3.9GHz). Tối đa tốc độ build code. |
-| **2. Độ trễ Timer & Khung hình** | • **Công cụ:** Win32 API `timeBeginPeriod(1)` / `timeEndPeriod(1)`.<br>• **Kiến nghị:**<br>&nbsp;&nbsp;- *Gaming / Remote:* Ép Timer xuống **1.0ms**. Triệt tiêu giật khung hình (micro-stutter) và trễ con trỏ chuột.<br>&nbsp;&nbsp;- *Pin / Mặc định:* Trả về **15.6ms**. Giảm chu kỳ đánh thức CPU, tiết kiệm điện. |
-| **3. Điều phối App nền (EcoQoS)** | • **Công cụ:** `SetProcessInformation(ProcessPowerThrottling)`, `SetPriorityClass`.<br>• **Kiến nghị:**<br>&nbsp;&nbsp;- *App đang Focus:* Nâng `ABOVE_NORMAL`, gỡ bỏ giới hạn xung.<br>&nbsp;&nbsp;- *App chạy ngầm (Drive, OneDrive, tab browser nền):* Ép cờ `EcoQoS` + `IDLE_PRIORITY`. Chặn app nền chiếm dụng CPU và tiêu hao pin. |
-| **4. Bộ nhớ RAM & Shared VRAM** | • **Công cụ:** Win32 API `K32EmptyWorkingSet`, `K32GetProcessMemoryInfo`.<br>• **Kiến nghị:**<br>&nbsp;&nbsp;- *Gaming:* Thu hồi Working Set app nền trước khi vào game. Tối đa hóa dung lượng RAM trống làm Shared VRAM cho iGPU.<br>&nbsp;&nbsp;- *Developer:* Thu hồi RAM trước khi compile code.<br>&nbsp;&nbsp;- *Tự động:* Can thiệp dọn Working Set khi RAM toàn hệ thống vượt ngưỡng **85%**. |
-| **5. Băng thông & Độ trễ mạng** | • **Công cụ:** `netsh int tcp set global autotuninglevel=normal`, đóng băng sync.<br>• **Kiến nghị:**<br>&nbsp;&nbsp;- *Remote Desktop / Gaming:* Đưa Google Drive, OneDrive xuống mức nhàn rỗi. Ngăn chặn nghẽn băng thông upload, giữ ping và jitter ổn định. |
-| **6. Quản lý Nguồn & Giữ màn hình** | • **Công cụ:** Win32 API `SetThreadExecutionState`.<br>• **Kiến nghị:**<br>&nbsp;&nbsp;- *Remote Desktop / Xem phim:* Kích hoạt `ES_SYSTEM_REQUIRED` + `ES_DISPLAY_REQUIRED`. Ngăn Windows tự khóa màn hình hoặc sleep làm đứt kết nối remote / ngắt video.<br>&nbsp;&nbsp;- *Di động:* Trả về `ES_CONTINUOUS` cho phép timeout tắt màn hình tiết kiệm điện. |
-| **7. Chính sách Tản nhiệt (Quạt)** | • **Công cụ:** `powercfg` (`SYSCOOLPOL`).<br>• **Kiến nghị:**<br>&nbsp;&nbsp;- *Remote / Cà phê:* Chế độ **Passive**. Tắt quạt tản nhiệt, tiết kiệm 1.5W - 2W điện nuôi mô-tơ, không tiếng ồn.<br>&nbsp;&nbsp;- *Gaming / Dev:* Chế độ **Active**. Cho quạt quay sớm để tản nhiệt trước khi chạm trần hãm xung. |
-| **8. Độ sáng Màn hình** | • **Công cụ:** WMI ACPI `WmiSetBrightness`.<br>• **Kiến nghị:** Màn hình ngốn 30-50% tổng điện laptop.<br>&nbsp;&nbsp;- *Cà phê/Pin:* Đặt **40% - 45%**.<br>&nbsp;&nbsp;- *Remote/Văn phòng:* Đặt **50%**.<br>&nbsp;&nbsp;- *Xem phim:* Đặt **70%** (tăng độ tương phản). |
-| **9. Đồ họa nền & Quay màn hình** | • **Công cụ:** Registry `HKCU\...\GameDVR` (`AppCaptureEnabled`).<br>• **Kiến nghị:**<br>&nbsp;&nbsp;- *Gaming:* Tắt GameDVR (`0`). Giải phóng bộ mã hóa phần cứng của GPU Intel HD 620.<br>&nbsp;&nbsp;- *Thường:* Bật lại (`1`). |
-| **10. Bảo vệ Tuổi thọ Phần cứng** | • **Công cụ:** Lenovo PM Service Registry (`IBMPMSVC`), `powercfg /hibernate on`.<br>• **Kiến nghị:**<br>&nbsp;&nbsp;- *Ngưỡng sạc Pin:* Bật ngắt sạc ở **80%** khi cắm nguồn liên tục tại bàn làm việc. Chống phồng rộp và chai pin kép.<br>&nbsp;&nbsp;- *Ngủ đông:* Dùng **Hibernate** thay vì Sleep S3. Cắt điện hoàn toàn khi gập máy, chống cạn pin qua đêm. |
+| **1. ⚡ Xung CPU & TDP** | Thanh trượt trần CPU Pin (DC) & Sạc (AC) + Nút nhanh `60% Pin`, `80% Cân bằng`, `100% Turbo`. |
+| **2. ⏱️ Timer & FPS** | Nút chuyển đổi Win32 `1.0 ms` (triệt tiêu lag chuột/stutter) vs `15.6 ms` (mặc định tiết kiệm điện). |
+| **3. 🍃 EcoQoS Nền** | Checkbox tự động điều phối EcoQoS + Nút bấm ép EcoQoS toàn bộ app ngầm ngay lập tức. |
+| **4. 🧠 RAM & VRAM** | Checkbox tự động thu hồi khi RAM vượt ngưỡng tùy chỉnh (70% - 95%) + Nút thu hồi RAM tức thì. |
+| **5. 🌐 Mạng & Sync** | Nút kích hoạt TCP Low-Latency qua `netsh` + Nút đóng băng / phục hồi dịch vụ sync đám mây. |
+| **6. 🔌 Chống Sleep** | Lựa chọn 3 chế độ: `Mặc định OS` \| `Giữ máy luôn thức` \| `Giữ cả Màn hình & Máy sáng`. |
+| **7. ❄️ Quạt làm mát** | Nút chọn chính sách quạt: `Thụ động (Passive 0dB)` vs `Chủ động (Active làm mát sớm)`. |
+| **8. 🔆 Độ sáng** | Thanh trượt độ sáng màn hình qua WMI ACPI + Nút nhanh `45% Pin`, `50% VP`, `70% Phim`. |
+| **9. 🎬 GameDVR** | Nút tắt GameDVR nền (giải phóng GPU encoder) vs Bật lại theo mặc định Windows. |
+| **10. 🛡️ Ngưỡng sạc & Ngủ** | Nút Bật/Tắt ngưỡng sạc pin 80% (Lenovo PM Service) + Nút kích hoạt chế độ ngủ đông Hibernate. |
 
 ---
 
-### 4. 🧹 Bộ Dọn dẹp Rác 3 Tầng (3-Tier Cleaner)
-- **🛡️ Tầng 1: Rác An toàn 100% (Safe System & Browser Junk):**
-  - User Temp (`%TEMP%`), System Temp (`C:\Windows\Temp`), Thùng rác (`SHQueryRecycleBinW`/`SHEmptyRecycleBinW`), Crash Dumps, Browser Cache (Edge/Chrome).
-- **💻 Tầng 2: Rác Phát triển Phần mềm (Developer & Build Cache):**
-  - Node.js / NPM Cache (`%LOCALAPPDATA%\npm-cache` - dung lượng hàng Gigabyte).
-  - Go Build & Module Cache (`%LOCALAPPDATA%\go-build`).
-  - Cargo Crates Download Cache (`%USERPROFILE%\.cargo\registry\cache`).
-  - Python Pip Cache (`%LOCALAPPDATA%\pip\cache`).
-- **⚙️ Tầng 3: Bảo trì Hệ thống Sâu (System Maintenance):**
-  - Windows Update Download Cache (`SoftwareDistribution\Download`).
-  - Windows Prefetch (`C:\Windows\Prefetch`).
+### 3. 🧹 Dọn Rác & Điều Phối RAM (Resource Relief)
+- **Bộ Dọn dẹp Rác 3 Tầng Phân loại:**
+  - 🛡️ **Tầng 1 - Rác An toàn 100%:** User Temp, System Temp, Thùng rác (Recycle Bin), Crash Dumps, Edge/Chrome Cache.
+  - 💻 **Tầng 2 - Rác Developer:** Node.js/NPM Cache (`%LOCALAPPDATA%\npm-cache` - dung lượng hàng GB), Go Build, Cargo Crates, Pip Cache.
+  - ⚙️ **Tầng 3 - Bảo trì Hệ thống:** Windows Update Download Cache, Prefetch.
+- **Điều phối RAM & Process Inspector:**
+  - Thanh trạng thái RAM + Checkbox tự động dọn khi RAM > 85%.
+  - Ô tìm kiếm tiến trình (Search Bar lọc theo tên ứng dụng hoặc PID).
+  - Thao tác trực tiếp trên từng tiến trình: `⚡ Dọn` (thu hồi Working Set riêng), `🍃 Eco` (áp dụng EcoQoS), `❌` (kết thúc an toàn).
 
 ---
 
-### 5. 🧠 Tối ưu bộ nhớ RAM & Giám sát Tiến trình (Process Inspector)
-- **Thu hồi Working Set nhàn rỗi:** Gọi `K32EmptyWorkingSet` đo lường dung lượng RAM giải phóng chính xác theo thời gian thực qua `K32GetProcessMemoryInfo`.
-- **Tự động dọn khi RAM > 85%:** Bảo vệ hệ thống khỏi tình trạng treo đơ do cạn bộ nhớ.
-- **Bộ lọc tìm kiếm tiến trình (Process Search Bar):** Tìm kiếm theo tên hoặc PID.
-- **Hành động trực tiếp trên từng tiến trình:**
-  - `⚡ Dọn`: Thu hồi Working Set riêng của tiến trình đó.
-  - `🍃 Eco`: Bật chế độ EcoQoS tiết kiệm điện cho tiến trình.
-  - `❌`: Kết thúc an toàn tiến trình (`TerminateProcess`).
-
----
-
-### 6. 🔋 Quản lý Pin & Cảm biến ACPI thời gian thực (Hardware Power Control)
-- **Đo dòng xả/nạp thời gian thực (Discharge/Charge Rate in mW):** Tính toán chính xác công suất Watt máy đang tiêu thụ (ví dụ: `⚡ 7.8 W`).
-- **Đo điện áp thời gian thực (Voltage in V):** Đọc cảm biến ACPI từ bo mạch chủ.
-- **Hỗ trợ Pin kép (Dual Battery):** Theo dõi chi tiết cả 2 pack pin (dung lượng thiết kế, dung lượng nạp đầy, số lần chu kỳ sạc, % chai pin).
-- **Ngưỡng sạc pin 80% (Battery Charge Threshold):** Bật/tắt chế độ ngắt sạc ở 80% để chống phù pin khi cắm sạc liên tục tại bàn làm việc.
-
----
-
-### 7. 🚀 Quản lý Khởi động & Bảo vệ Máy (Startup & Telemetry Debloat)
-- **Bật / Tắt Ứng dụng Khởi động 1-Click:** Chuẩn cơ chế `StartupApproved` của Windows Task Manager.
+### 4. 🛡️ Khởi Động & Bảo Vệ Phần Cứng (Hardware Guard)
+- **S.M.A.R.T NVMe SSD Health:** Đọc trực tiếp tình trạng sức khỏe phần cứng ổ đĩa (`Healthy / OK`) và đo % dung lượng các phân vùng.
+- **Cảm biến ACPI Pin Kép:** Đọc dung lượng thiết kế, dung lượng nạp đầy, số chu kỳ sạc, % chai pin, điện áp thời gian thực (V) và công suất dòng xả/nạp (mW / Watt).
+- **Khóa Ngưỡng Sạc Pin 80%:** Ngắt sạc khi pin đạt 80% để chống phồng rộp và chai pin khi cắm sạc liên tục tại bàn làm việc.
+- **Chế độ Ngủ đông (Hibernate):** Quản lý trạng thái ngắt điện hoàn toàn khi gập máy.
 - **Windows Telemetry Debloat:** 1-Click vô hiệu hóa dịch vụ thu thập dữ liệu ngầm `DiagTrack` của Windows, giảm tải CPU và ổ đĩa nền.
-- **S.M.A.R.T NVMe SSD Health:** Đọc tình trạng sức khỏe phần cứng ổ đĩa (`Healthy / OK`).
-- **Chế độ ngủ đông (Hibernate Protection):** Quản lý trạng thái ngắt điện hoàn toàn khi gập máy.
+- **Bật / Tắt Ứng dụng Khởi động 1-Click:** Chuẩn cơ chế `StartupApproved` của Windows Task Manager.
 
 ---
 

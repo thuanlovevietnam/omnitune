@@ -49,6 +49,7 @@ pub fn get_power_status() -> PowerStatus {
     PowerStatus::default()
 }
 
+#[allow(dead_code)]
 pub fn get_active_scheme_name() -> String {
     let output = Command::new("powercfg")
         .arg("/getactivescheme")

@@ -1,12 +1,9 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tab {
-    Scenarios,
-    Criteria,
-    Dashboard,
-    Cleaner,
-    Memory,
-    Power,
-    Protection,
+    SmartCenter,
+    TuningMatrix,
+    ResourceRelief,
+    HardwareGuard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
