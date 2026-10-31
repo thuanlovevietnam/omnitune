@@ -31,7 +31,11 @@ pub struct BatteryDetails {
     pub cycle_count: u32,
     pub design_capacity_mwh: u64,
     pub full_charge_capacity_mwh: u64,
+    pub remaining_capacity_mwh: u64,
     pub current_charge_percent: u8,
     pub wear_percent: f32,
     pub is_charging: bool,
+    pub discharge_rate_mw: u32,
+    pub charge_rate_mw: u32,
+    pub voltage_mv: u32,
 }

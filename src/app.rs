@@ -2,6 +2,7 @@ use crate::battery_info::get_dual_battery_info;
 use crate::cleaner::{
     clean_target, format_bytes, get_default_targets, scan_target,
 };
+use crate::eco_qos::{apply_foreground_boost_and_eco, get_foreground_process};
 use crate::memory::{get_memory_stats, get_top_processes, trim_working_sets, MemStats};
 use crate::power::{
     get_active_scheme_name, get_brightness, get_power_status, set_brightness, set_cpu_max_state_ac,
@@ -21,6 +22,10 @@ pub struct OptimizerApp {
     current_tab: Tab,
     current_scenario: Scenario,
     auto_detect_enabled: bool,
+    eco_qos_enabled: bool,
+    foreground_info: Option<(u32, String)>,
+    eco_boost_status: String,
+
     theme_mode: ThemeMode,
     palette: ThemePalette,
     sys: System,
@@ -49,6 +54,7 @@ pub struct OptimizerApp {
     // General status
     quick_opt_msg: String,
     last_refresh: Instant,
+    last_battery_poll: Instant,
 }
 
 impl OptimizerApp {
@@ -61,12 +67,33 @@ impl OptimizerApp {
         sys.refresh_all();
 
         let mem_stats = get_memory_stats();
-        let power_status = get_power_status();
+        let mut power_status = get_power_status();
         let top_processes = get_top_processes(&mut sys, 10);
         let dual_batteries = get_dual_battery_info();
         let cpu_usage = sys.global_cpu_usage();
         let protection = get_protection_overview(cpu_usage);
         let brightness_level = get_brightness();
+
+        let foreground_info = get_foreground_process(&sys);
+
+        // Compute power wattage and voltage from ACPI status
+        let total_discharge: u32 = dual_batteries.iter().map(|b| b.discharge_rate_mw).sum();
+        let total_charge: u32 = dual_batteries.iter().map(|b| b.charge_rate_mw).sum();
+        let avg_voltage: u32 = if !dual_batteries.is_empty() {
+            dual_batteries.iter().map(|b| b.voltage_mv).sum::<u32>() / dual_batteries.len() as u32
+        } else {
+            0
+        };
+        power_status.discharge_rate_mw = total_discharge;
+        power_status.charge_rate_mw = total_charge;
+        power_status.power_watts = if total_discharge > 0 {
+            total_discharge as f32 / 1000.0
+        } else if total_charge > 0 {
+            total_charge as f32 / 1000.0
+        } else {
+            0.0
+        };
+        power_status.voltage_volts = avg_voltage as f32 / 1000.0;
 
         let cpu_brand = sys
             .cpus()
@@ -96,6 +123,9 @@ impl OptimizerApp {
             current_tab: Tab::Scenarios,
             current_scenario: Scenario::Default,
             auto_detect_enabled: false,
+            eco_qos_enabled: true,
+            foreground_info,
+            eco_boost_status: String::new(),
             theme_mode,
             palette,
             sys,
@@ -114,6 +144,7 @@ impl OptimizerApp {
             cpu_cores_info,
             quick_opt_msg: String::new(),
             last_refresh: Instant::now(),
+            last_battery_poll: Instant::now(),
         }
     }
 
@@ -124,18 +155,60 @@ impl OptimizerApp {
             self.power_status = get_power_status();
             self.protection.cpu_usage = self.sys.global_cpu_usage();
 
-            if self.auto_detect_enabled {
-                if let Some(scen) = crate::scenarios::detect_recommended_scenario(
-                    &self.sys,
-                    self.power_status.is_ac_online,
-                    self.power_status.battery_percent,
-                ) {
-                    if scen != self.current_scenario {
-                        self.current_scenario = scen;
-                        let msg = apply_scenario(scen, &mut self.sys);
-                        self.scenario_status_msg = format!("🤖 [Tự động]: {}", msg);
+            // Track foreground window
+            let fg = get_foreground_process(&self.sys);
+            if fg != self.foreground_info {
+                self.foreground_info = fg.clone();
+
+                if self.eco_qos_enabled {
+                    let (_, eco_count) = apply_foreground_boost_and_eco(
+                        &self.sys,
+                        self.foreground_info.as_ref().map(|(pid, _)| *pid),
+                    );
+                    if let Some((_, ref name)) = self.foreground_info {
+                        self.eco_boost_status = format!(
+                            "🎯 Đã ưu tiên '{}' (Áp dụng EcoQoS hạ tải {} app nền)",
+                            name, eco_count
+                        );
                     }
                 }
+
+                if self.auto_detect_enabled {
+                    if let Some(scen) = crate::scenarios::detect_recommended_scenario(
+                        &self.sys,
+                        self.power_status.is_ac_online,
+                        self.power_status.battery_percent,
+                    ) {
+                        if scen != self.current_scenario {
+                            self.current_scenario = scen;
+                            let msg = apply_scenario(scen, &mut self.sys);
+                            self.scenario_status_msg = format!("🤖 [Tự động]: {}", msg);
+                        }
+                    }
+                }
+            }
+
+            // Periodic ACPI battery poll (every 10s)
+            if self.last_battery_poll.elapsed() >= Duration::from_secs(10) {
+                self.dual_batteries = get_dual_battery_info();
+                let total_discharge: u32 = self.dual_batteries.iter().map(|b| b.discharge_rate_mw).sum();
+                let total_charge: u32 = self.dual_batteries.iter().map(|b| b.charge_rate_mw).sum();
+                let avg_voltage: u32 = if !self.dual_batteries.is_empty() {
+                    self.dual_batteries.iter().map(|b| b.voltage_mv).sum::<u32>() / self.dual_batteries.len() as u32
+                } else {
+                    0
+                };
+                self.power_status.discharge_rate_mw = total_discharge;
+                self.power_status.charge_rate_mw = total_charge;
+                self.power_status.power_watts = if total_discharge > 0 {
+                    total_discharge as f32 / 1000.0
+                } else if total_charge > 0 {
+                    total_charge as f32 / 1000.0
+                } else {
+                    0.0
+                };
+                self.power_status.voltage_volts = avg_voltage as f32 / 1000.0;
+                self.last_battery_poll = Instant::now();
             }
 
             self.last_refresh = Instant::now();
@@ -148,9 +221,15 @@ impl OptimizerApp {
         if !self.power_status.is_ac_online {
             let _ = set_power_scheme("SCHEME_MAX");
         }
+        if self.eco_qos_enabled {
+            let _ = apply_foreground_boost_and_eco(
+                &self.sys,
+                self.foreground_info.as_ref().map(|(pid, _)| *pid),
+            );
+        }
         self.mem_stats = get_memory_stats();
         self.quick_opt_msg = format!(
-            "✓ Đã tối ưu! Thu hồi {} RAM từ {} tiến trình & áp trần xung 80% cho pin.",
+            "✓ Đã tối ưu! Thu hồi {} RAM từ {} tiến trình & kích hoạt EcoQoS app nền.",
             format_bytes(freed_ram),
             count
         );
@@ -274,7 +353,7 @@ impl eframe::App for OptimizerApp {
                     render_tab_button(ui, &mut self.current_tab, Tab::Dashboard, "📊 Tổng quan", &p);
                     render_tab_button(ui, &mut self.current_tab, Tab::Cleaner, "🧹 Dọn rác", &p);
                     render_tab_button(ui, &mut self.current_tab, Tab::Memory, "🧠 RAM", &p);
-                    render_tab_button(ui, &mut self.current_tab, Tab::Power, "🔋 Pin & CPU", &p);
+                    render_tab_button(ui, &mut self.current_tab, Tab::Power, "🔋 Pin & ACPI", &p);
                     render_tab_button(ui, &mut self.current_tab, Tab::Protection, "🛡️ Bảo vệ", &p);
                 });
 
@@ -475,19 +554,53 @@ impl OptimizerApp {
                     let status = if self.power_status.is_charging {
                         "⚡ Đang nạp sạc...".to_string()
                     } else if self.power_status.is_ac_online {
-                        "Đã cắm sạc đầy".to_string()
+                        "Đã cắm sạc đầy (AC)".to_string()
                     } else if let Some(sec) = self.power_status.remaining_seconds {
                         format!("Còn ~{}h {:02}m", sec / 3600, (sec % 3600) / 60)
                     } else {
                         "Đang dùng pin".to_string()
                     };
                     ui.label(RichText::new(status).size(12.0).strong().color(p.text_primary));
-                    let pack_count_str = if self.dual_batteries.len() > 1 {
+
+                    let power_rate_str = if self.power_status.discharge_rate_mw > 0 {
+                        format!("Tiêu thụ: {:.1} W", self.power_status.power_watts)
+                    } else if self.power_status.charge_rate_mw > 0 {
+                        format!("Nạp vào: {:.1} W", self.power_status.power_watts)
+                    } else if self.power_status.voltage_volts > 0.0 {
+                        format!("Điện áp: {:.1} V", self.power_status.voltage_volts)
+                    } else if self.dual_batteries.len() > 1 {
                         format!("{} pack pin", self.dual_batteries.len())
                     } else {
                         "1 pack pin".to_string()
                     };
-                    ui.label(RichText::new(pack_count_str).size(11.5).color(p.text_secondary));
+                    ui.label(RichText::new(power_rate_str).size(11.5).color(p.text_secondary));
+                });
+            });
+        });
+
+        ui.add_space(8.0);
+
+        // Foreground Window & EcoQoS Card
+        p.modern_card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("ỨNG DỤNG ĐANG FOCUS:").size(11.5).strong().color(p.accent_blue));
+                        if let Some((_, ref name)) = self.foreground_info {
+                            ui.label(RichText::new(name).size(12.5).strong().color(p.text_primary));
+                        } else {
+                            ui.label(RichText::new("Chưa xác định").size(12.0).color(p.text_secondary));
+                        }
+                    });
+                    if !self.eco_boost_status.is_empty() {
+                        ui.label(RichText::new(&self.eco_boost_status).size(11.5).color(p.success_green));
+                    } else {
+                        ui.label(RichText::new("Tự động ưu tiên xung nhịp cho cửa sổ đang dùng, hạ tải EcoQoS app ngầm.").size(11.5).color(p.text_secondary));
+                    }
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.checkbox(&mut self.eco_qos_enabled, RichText::new("EcoQoS Bật").size(12.0).strong().color(p.accent_blue));
                 });
             });
         });
@@ -525,7 +638,7 @@ impl OptimizerApp {
                 ui.vertical(|ui| {
                     ui.heading(RichText::new("⚡ Tối ưu 1-Click").size(15.0).strong().color(p.text_primary));
                     ui.label(
-                        RichText::new("Thu hồi Working Set RAM và khóa trần 80% CPU khi dùng pin.")
+                        RichText::new("Thu hồi Working Set RAM và áp dụng EcoQoS cho các tiến trình chạy ngầm.")
                             .size(12.0)
                             .color(p.text_secondary),
                     );
@@ -781,9 +894,9 @@ impl OptimizerApp {
     fn render_power(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
-        ui.heading(RichText::new("🔋 Pin & Công suất CPU").size(16.0).strong().color(p.text_primary));
+        ui.heading(RichText::new("🔋 Pin & Cảm biến ACPI").size(16.0).strong().color(p.text_primary));
         ui.label(
-            RichText::new("Điều khiển xung nhịp CPU, độ sáng và giám sát cảm biến pin.")
+            RichText::new("Điều khiển xung nhịp CPU, độ sáng và giám sát dòng xả Watt thời gian thực.")
                 .size(12.0)
                 .color(p.text_secondary),
         );
@@ -895,7 +1008,7 @@ impl OptimizerApp {
         });
 
         ui.add_space(8.0);
-        ui.label(RichText::new("CẢM BIẾN PIN PHẦN CỨNG").size(12.0).strong().color(p.accent_blue));
+        ui.label(RichText::new("CẢM BIẾN PIN PHẦN CỨNG (ACPI)").size(12.0).strong().color(p.accent_blue));
         ui.add_space(4.0);
 
         for (i, bat) in self.dual_batteries.iter().enumerate() {
@@ -931,6 +1044,34 @@ impl OptimizerApp {
                             .size(11.5)
                             .color(p.text_primary),
                     );
+                });
+
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    let volt = if bat.voltage_mv > 0 {
+                        format!("{:.2} V", bat.voltage_mv as f32 / 1000.0)
+                    } else {
+                        "N/A".to_string()
+                    };
+                    ui.label(RichText::new(format!("Điện áp: {}", volt)).size(11.5).color(p.text_primary));
+                    ui.separator();
+                    if bat.discharge_rate_mw > 0 {
+                        ui.label(
+                            RichText::new(format!("Dòng xả: {} mW ({:.2} W)", bat.discharge_rate_mw, bat.discharge_rate_mw as f32 / 1000.0))
+                                .size(11.5)
+                                .strong()
+                                .color(p.warn_amber),
+                        );
+                    } else if bat.charge_rate_mw > 0 {
+                        ui.label(
+                            RichText::new(format!("Dòng nạp: {} mW ({:.2} W)", bat.charge_rate_mw, bat.charge_rate_mw as f32 / 1000.0))
+                                .size(11.5)
+                                .strong()
+                                .color(p.success_green),
+                        );
+                    } else {
+                        ui.label(RichText::new("Dòng điện: 0 mW (Cắm nguồn AC)").size(11.5).color(p.text_secondary));
+                    }
                 });
             });
             ui.add_space(4.0);

@@ -3,6 +3,7 @@
 mod app;
 mod battery_info;
 mod cleaner;
+mod eco_qos;
 mod memory;
 mod power;
 mod protection;

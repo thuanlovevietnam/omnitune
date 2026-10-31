@@ -5,7 +5,7 @@ use std::process::Command;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 struct BatteryWmiBasic {
     #[serde(rename = "Name")]
     name: Option<String>,
@@ -15,44 +15,75 @@ struct BatteryWmiBasic {
     battery_status: Option<u32>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 struct BatteryStatic {
     #[serde(rename = "DesignedCapacity")]
     designed_capacity: Option<u64>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 struct BatteryCycle {
     #[serde(rename = "CycleCount")]
     cycle_count: Option<u32>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 struct BatteryFullCap {
     #[serde(rename = "FullChargedCapacity")]
     full_charged_capacity: Option<u64>,
 }
 
+#[derive(Deserialize, Debug, Default)]
+struct BatteryRealTimeStatus {
+    #[serde(rename = "DischargeRate")]
+    discharge_rate: Option<u32>,
+    #[serde(rename = "ChargeRate")]
+    charge_rate: Option<u32>,
+    #[serde(rename = "Voltage")]
+    voltage: Option<u32>,
+    #[serde(rename = "RemainingCapacity")]
+    remaining_capacity: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct BatteryCombinedPayload {
+    #[serde(rename = "Basic")]
+    basic: Option<serde_json::Value>,
+    #[serde(rename = "Static")]
+    r#static: Option<serde_json::Value>,
+    #[serde(rename = "Cycles")]
+    cycles: Option<serde_json::Value>,
+    #[serde(rename = "Full")]
+    full: Option<serde_json::Value>,
+    #[serde(rename = "Status")]
+    status: Option<serde_json::Value>,
+}
+
 pub fn get_dual_battery_info() -> Vec<BatteryDetails> {
-    // 1. Basic battery status and percentage from Win32_Battery
-    let ps_basic = "Get-CimInstance Win32_Battery | Select-Object Name, EstimatedChargeRemaining, BatteryStatus | ConvertTo-Json";
-    let basic_json = run_ps_json(ps_basic);
-    let basic_list: Vec<BatteryWmiBasic> = parse_json_array(&basic_json);
+    let script = r#"& {
+$b = Get-CimInstance Win32_Battery | Select-Object Name, EstimatedChargeRemaining, BatteryStatus;
+$s = Get-WmiObject -Namespace root/wmi -Class BatteryStaticData | Select-Object DesignedCapacity;
+$c = Get-WmiObject -Namespace root/wmi -Class BatteryCycleCount | Select-Object CycleCount;
+$f = Get-WmiObject -Namespace root/wmi -Class BatteryFullChargedCapacity | Select-Object FullChargedCapacity;
+$t = Get-WmiObject -Namespace root/wmi -Class BatteryStatus | Select-Object DischargeRate, ChargeRate, Voltage, RemainingCapacity;
+ConvertTo-Json @{ Basic=$b; Static=$s; Cycles=$c; Full=$f; Status=$t }
+}"#;
 
-    // 2. Real Design Capacity from ACPI BatteryStaticData
-    let ps_static = "Get-WmiObject -Namespace root/wmi -Class BatteryStaticData | Select-Object DesignedCapacity | ConvertTo-Json";
-    let static_json = run_ps_json(ps_static);
-    let static_list: Vec<BatteryStatic> = parse_json_array(&static_json);
+    let json_text = run_ps_script(script);
+    if json_text.trim().is_empty() {
+        return Vec::new();
+    }
 
-    // 3. Real Cycle Count from ACPI BatteryCycleCount
-    let ps_cycles = "Get-WmiObject -Namespace root/wmi -Class BatteryCycleCount | Select-Object CycleCount | ConvertTo-Json";
-    let cycles_json = run_ps_json(ps_cycles);
-    let cycles_list: Vec<BatteryCycle> = parse_json_array(&cycles_json);
+    let payload: BatteryCombinedPayload = match serde_json::from_str(&json_text) {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
 
-    // 4. Real Full Charge Capacity from ACPI BatteryFullChargedCapacity
-    let ps_full = "Get-WmiObject -Namespace root/wmi -Class BatteryFullChargedCapacity | Select-Object FullChargedCapacity | ConvertTo-Json";
-    let full_json = run_ps_json(ps_full);
-    let full_list: Vec<BatteryFullCap> = parse_json_array(&full_json);
+    let basic_list: Vec<BatteryWmiBasic> = parse_value_list(payload.basic);
+    let static_list: Vec<BatteryStatic> = parse_value_list(payload.r#static);
+    let cycles_list: Vec<BatteryCycle> = parse_value_list(payload.cycles);
+    let full_list: Vec<BatteryFullCap> = parse_value_list(payload.full);
+    let status_list: Vec<BatteryRealTimeStatus> = parse_value_list(payload.status);
 
     let mut result = Vec::new();
 
@@ -77,6 +108,12 @@ pub fn get_dual_battery_info() -> Vec<BatteryDetails> {
             .and_then(|c| c.cycle_count)
             .unwrap_or(0);
 
+        let r_status = status_list.get(i);
+        let discharge_rate = r_status.and_then(|s| s.discharge_rate).unwrap_or(0);
+        let charge_rate = r_status.and_then(|s| s.charge_rate).unwrap_or(0);
+        let voltage = r_status.and_then(|s| s.voltage).unwrap_or(0);
+        let remaining_cap = r_status.and_then(|s| s.remaining_capacity).unwrap_or(0);
+
         let wear = if design_cap > 0 && full_cap > 0 && full_cap <= design_cap {
             ((1.0 - (full_cap as f32 / design_cap as f32)) * 100.0).max(0.0)
         } else {
@@ -88,16 +125,20 @@ pub fn get_dual_battery_info() -> Vec<BatteryDetails> {
             cycle_count: cycles,
             design_capacity_mwh: design_cap,
             full_charge_capacity_mwh: full_cap,
+            remaining_capacity_mwh: remaining_cap,
             current_charge_percent: charge,
             wear_percent: wear,
             is_charging,
+            discharge_rate_mw: discharge_rate,
+            charge_rate_mw: charge_rate,
+            voltage_mv: voltage,
         });
     }
 
     result
 }
 
-fn run_ps_json(script: &str) -> String {
+fn run_ps_script(script: &str) -> String {
     let output = Command::new("powershell")
         .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", script])
         .creation_flags(CREATE_NO_WINDOW)
@@ -109,16 +150,15 @@ fn run_ps_json(script: &str) -> String {
         .unwrap_or_default()
 }
 
-fn parse_json_array<T: for<'de> Deserialize<'de>>(json: &str) -> Vec<T> {
-    let trimmed = json.trim();
-    if trimmed.is_empty() {
+fn parse_value_list<T: for<'de> Deserialize<'de>>(val: Option<serde_json::Value>) -> Vec<T> {
+    let Some(v) = val else {
         return Vec::new();
-    }
+    };
 
-    if trimmed.starts_with('[') {
-        serde_json::from_str(trimmed).unwrap_or_default()
-    } else if trimmed.starts_with('{') {
-        if let Ok(single) = serde_json::from_str::<T>(trimmed) {
+    if v.is_array() {
+        serde_json::from_value(v).unwrap_or_default()
+    } else if v.is_object() {
+        if let Ok(single) = serde_json::from_value::<T>(v) {
             vec![single]
         } else {
             Vec::new()

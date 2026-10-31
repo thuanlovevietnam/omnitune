@@ -10,6 +10,10 @@ pub struct PowerStatus {
     pub battery_percent: u8,
     pub is_charging: bool,
     pub remaining_seconds: Option<u32>,
+    pub discharge_rate_mw: u32,
+    pub charge_rate_mw: u32,
+    pub power_watts: f32,
+    pub voltage_volts: f32,
 }
 
 pub fn get_power_status() -> PowerStatus {
@@ -34,6 +38,10 @@ pub fn get_power_status() -> PowerStatus {
                 battery_percent: percent,
                 is_charging,
                 remaining_seconds: remaining,
+                discharge_rate_mw: 0,
+                charge_rate_mw: 0,
+                power_watts: 0.0,
+                voltage_volts: 0.0,
             };
         }
     }
