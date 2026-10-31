@@ -55,4 +55,5 @@ pub struct StartupAppItem {
     pub command: String,
     pub location: String,
     pub user: String,
+    pub is_enabled: bool,
 }

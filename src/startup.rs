@@ -15,10 +15,45 @@ struct StartupJsonItem {
     location: Option<String>,
     #[serde(rename = "User")]
     user: Option<String>,
+    #[serde(rename = "IsEnabled")]
+    is_enabled: Option<bool>,
 }
 
 pub fn get_startup_apps() -> Vec<StartupAppItem> {
-    let script = "Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location, User | ConvertTo-Json";
+    let script = r#"& {
+$apps = Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location, User
+$runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+$folderKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
+
+$apps | ForEach-Object {
+    $nm = $_.Name
+    $loc = $_.Location
+    $enabled = $true
+
+    if ($loc -like "*Startup*") {
+        $p = Get-ItemProperty -Path $folderKey -Name $nm -ErrorAction SilentlyContinue
+        if ($p) {
+            $val = $p.$nm
+            if ($val -and ($val[0] -eq 1 -or $val[0] -eq 3)) { $enabled = $false }
+        }
+    } else {
+        $p = Get-ItemProperty -Path $runKey -Name $nm -ErrorAction SilentlyContinue
+        if ($p) {
+            $val = $p.$nm
+            if ($val -and ($val[0] -eq 1 -or $val[0] -eq 3)) { $enabled = $false }
+        }
+    }
+
+    [PSCustomObject]@{
+        Name = $_.Name
+        Command = $_.Command
+        Location = $_.Location
+        User = $_.User
+        IsEnabled = $enabled
+    }
+} | ConvertTo-Json
+}"#;
+
     let output = Command::new("powershell")
         .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", script])
         .creation_flags(CREATE_NO_WINDOW)
@@ -53,8 +88,45 @@ pub fn get_startup_apps() -> Vec<StartupAppItem> {
             command: i.command.unwrap_or_default(),
             location: i.location.unwrap_or_default(),
             user: i.user.unwrap_or_default(),
+            is_enabled: i.is_enabled.unwrap_or(true),
         })
         .collect()
+}
+
+pub fn toggle_startup_item(name: &str, location: &str, enable: bool) -> bool {
+    let is_folder = location.contains("Startup");
+    let target_key = if is_folder {
+        r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
+    } else {
+        r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+    };
+
+    let byte_val = if enable { 2 } else { 3 };
+
+    let script = format!(
+        r#"& {{
+$key = '{key}'
+$p = Get-ItemProperty -Path $key -Name '{nm}' -ErrorAction SilentlyContinue
+if ($p) {{
+    $val = $p.'{nm}'
+    $val[0] = {b}
+    Set-ItemProperty -Path $key -Name '{nm}' -Value $val -ErrorAction SilentlyContinue
+}} else {{
+    $val = [byte[]](0x0{b}, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    Set-ItemProperty -Path $key -Name '{nm}' -Value $val -ErrorAction SilentlyContinue
+}}
+}}"#,
+        key = target_key,
+        nm = name,
+        b = byte_val
+    );
+
+    Command::new("powershell")
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 pub fn is_telemetry_active() -> bool {

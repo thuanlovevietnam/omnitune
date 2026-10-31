@@ -2,15 +2,18 @@ use crate::battery_info::get_dual_battery_info;
 use crate::cleaner::{
     clean_target, format_bytes, get_default_targets, scan_target,
 };
-use crate::eco_qos::{apply_foreground_boost_and_eco, get_foreground_process};
-use crate::memory::{get_memory_stats, get_top_processes, trim_working_sets, MemStats};
+use crate::eco_qos::{apply_foreground_boost_and_eco, get_foreground_process, set_process_eco_mode};
+use crate::memory::{
+    get_memory_stats, get_top_processes, terminate_process, trim_single_process, trim_working_sets,
+    MemStats,
+};
 use crate::power::{
     get_active_scheme_name, get_brightness, get_power_status, set_brightness, set_cpu_max_state_ac,
     set_cpu_max_state_dc, set_power_scheme, PowerStatus,
 };
 use crate::protection::{enable_hibernate_as_admin, get_protection_overview, ProtectionOverview};
 use crate::scenarios::{apply_scenario, Scenario};
-use crate::startup::{get_startup_apps, is_telemetry_active, toggle_telemetry};
+use crate::startup::{get_startup_apps, is_telemetry_active, toggle_startup_item, toggle_telemetry};
 use crate::theme::{
     apply_theme, configure_fonts, ThemeMode, ThemePalette,
 };
@@ -40,10 +43,16 @@ pub struct OptimizerApp {
     clean_categories: Vec<JunkCategory>,
     clean_status_msg: String,
 
+    // Process Inspector state
+    process_search_query: String,
+    process_action_msg: String,
+    auto_ram_trim_enabled: bool,
+
     // Startup & Telemetry state
     startup_apps: Vec<StartupAppItem>,
     is_telemetry_running: bool,
     telemetry_status_msg: String,
+    startup_action_msg: String,
 
     // Power settings
     brightness_level: u32,
@@ -74,7 +83,7 @@ impl OptimizerApp {
 
         let mem_stats = get_memory_stats();
         let mut power_status = get_power_status();
-        let top_processes = get_top_processes(&mut sys, 10);
+        let top_processes = get_top_processes(&mut sys, 20);
         let dual_batteries = get_dual_battery_info();
         let cpu_usage = sys.global_cpu_usage();
         let protection = get_protection_overview(cpu_usage);
@@ -146,9 +155,13 @@ impl OptimizerApp {
             protection,
             clean_categories,
             clean_status_msg: "Sẵn sàng quét rác hệ thống (Đã phân 3 tầng rác).".to_string(),
+            process_search_query: String::new(),
+            process_action_msg: String::new(),
+            auto_ram_trim_enabled: true,
             startup_apps,
             is_telemetry_running,
             telemetry_status_msg: String::new(),
+            startup_action_msg: String::new(),
             brightness_level,
             cpu_limit_dc: 80,
             power_status_msg: String::new(),
@@ -167,6 +180,18 @@ impl OptimizerApp {
             self.mem_stats = get_memory_stats();
             self.power_status = get_power_status();
             self.protection.cpu_usage = self.sys.global_cpu_usage();
+
+            // Auto-trim RAM if exceeds 85%
+            if self.auto_ram_trim_enabled && self.mem_stats.load_percent >= 85 {
+                let (freed, count) = trim_working_sets(&mut self.sys);
+                if freed > 0 {
+                    self.quick_opt_msg = format!(
+                        "🤖 [Tự động]: RAM vượt 85%, đã thu hồi {} từ {} tiến trình.",
+                        format_bytes(freed),
+                        count
+                    );
+                }
+            }
 
             // Track foreground window
             let fg = get_foreground_process(&self.sys);
@@ -365,7 +390,7 @@ impl eframe::App for OptimizerApp {
                     render_tab_button(ui, &mut self.current_tab, Tab::Scenarios, "🎯 Kịch bản", &p);
                     render_tab_button(ui, &mut self.current_tab, Tab::Dashboard, "📊 Tổng quan", &p);
                     render_tab_button(ui, &mut self.current_tab, Tab::Cleaner, "🧹 Dọn rác", &p);
-                    render_tab_button(ui, &mut self.current_tab, Tab::Memory, "🧠 RAM", &p);
+                    render_tab_button(ui, &mut self.current_tab, Tab::Memory, "🧠 RAM & Tiến trình", &p);
                     render_tab_button(ui, &mut self.current_tab, Tab::Power, "🔋 Pin & ACPI", &p);
                     render_tab_button(ui, &mut self.current_tab, Tab::Protection, "🚀 Khởi động & Bảo vệ", &p);
                 });
@@ -910,9 +935,18 @@ impl OptimizerApp {
     fn render_memory(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
-        ui.heading(RichText::new("🧠 Tối ưu RAM").size(16.0).strong().color(p.text_primary));
+        ui.horizontal(|ui| {
+            ui.heading(RichText::new("🧠 Tối ưu RAM & Tiến trình").size(16.0).strong().color(p.text_primary));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.checkbox(
+                    &mut self.auto_ram_trim_enabled,
+                    RichText::new("Tự động dọn khi RAM > 85%").size(11.5).strong().color(p.accent_blue),
+                );
+            });
+        });
+
         ui.label(
-            RichText::new("Thu hồi Working Set nhàn rỗi để giảm áp lực bộ nhớ.")
+            RichText::new("Thu hồi Working Set nhàn rỗi, giám sát và quản lý trực tiếp từng tiến trình.")
                 .size(12.0)
                 .color(p.text_secondary),
         );
@@ -938,18 +972,24 @@ impl OptimizerApp {
             ui.add(ProgressBar::new(frac).desired_height(14.0));
             ui.add_space(8.0);
 
-            let trim_btn = egui::Button::new(
-                RichText::new("⚡ Thu hồi RAM ngay").size(13.0).strong().color(Color32::WHITE),
-            )
-            .fill(p.primary_btn)
-            .corner_radius(CornerRadius::same(6));
+            ui.horizontal(|ui| {
+                let trim_btn = egui::Button::new(
+                    RichText::new("⚡ Thu hồi RAM toàn hệ thống").size(13.0).strong().color(Color32::WHITE),
+                )
+                .fill(p.primary_btn)
+                .corner_radius(CornerRadius::same(6));
 
-            if ui.add(trim_btn).clicked() {
-                let (freed, count) = trim_working_sets(&mut self.sys);
-                self.mem_stats = get_memory_stats();
-                self.top_processes = get_top_processes(&mut self.sys, 10);
-                self.quick_opt_msg = format!("✓ Đã thu hồi {} từ {} tiến trình!", format_bytes(freed), count);
-            }
+                if ui.add(trim_btn).clicked() {
+                    let (freed, count) = trim_working_sets(&mut self.sys);
+                    self.mem_stats = get_memory_stats();
+                    self.top_processes = get_top_processes(&mut self.sys, 25);
+                    self.quick_opt_msg = format!("✓ Đã thu hồi {} từ {} tiến trình!", format_bytes(freed), count);
+                }
+
+                if ui.button(RichText::new("🔄 Làm mới").size(12.0)).clicked() {
+                    self.top_processes = get_top_processes(&mut self.sys, 25);
+                }
+            });
 
             if !self.quick_opt_msg.is_empty() {
                 ui.add_space(4.0);
@@ -963,24 +1003,80 @@ impl OptimizerApp {
         });
 
         ui.add_space(8.0);
-        ui.label(RichText::new("TOP ỨNG DỤNG CHIẾM RAM").size(12.0).strong().color(p.accent_blue));
-        ui.add_space(4.0);
 
+        // Process Inspector Section
         p.modern_card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("GIÁM SÁT TIẾN TRÌNH (PROCESS INSPECTOR)").size(12.0).strong().color(p.accent_blue));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.process_search_query)
+                            .hint_text("🔍 Lọc tên app hoặc PID...")
+                            .desired_width(160.0),
+                    );
+                });
+            });
+
+            if !self.process_action_msg.is_empty() {
+                ui.add_space(2.0);
+                ui.label(RichText::new(&self.process_action_msg).size(12.0).strong().color(p.success_green));
+            }
+
+            ui.separator();
+            ui.add_space(2.0);
+
+            let query = self.process_search_query.trim().to_lowercase();
+            let filtered_procs: Vec<_> = self
+                .top_processes
+                .iter()
+                .filter(|p| {
+                    if query.is_empty() {
+                        true
+                    } else {
+                        p.name.to_lowercase().contains(&query) || p.pid.to_string().contains(&query)
+                    }
+                })
+                .collect();
+
             egui::Grid::new("proc_grid")
                 .striped(true)
-                .min_col_width(60.0)
-                .spacing(Vec2::new(14.0, 5.0))
+                .min_col_width(50.0)
+                .spacing(Vec2::new(10.0, 5.0))
                 .show(ui, |ui| {
                     ui.label(RichText::new("PID").size(11.5).strong().color(p.text_secondary));
                     ui.label(RichText::new("Ứng dụng").size(11.5).strong().color(p.text_secondary));
-                    ui.label(RichText::new("Bộ nhớ").size(11.5).strong().color(p.text_secondary));
+                    ui.label(RichText::new("RAM").size(11.5).strong().color(p.text_secondary));
+                    ui.label(RichText::new("Hành động").size(11.5).strong().color(p.text_secondary));
                     ui.end_row();
 
-                    for proc in &self.top_processes {
-                        ui.label(RichText::new(proc.pid.to_string()).size(11.5).color(p.text_secondary));
+                    for proc in filtered_procs {
+                        ui.label(RichText::new(proc.pid.to_string()).size(11.0).color(p.text_secondary));
                         ui.label(RichText::new(&proc.name).size(11.5).strong().color(p.text_primary));
                         ui.label(RichText::new(format_bytes(proc.memory_bytes)).size(11.5).color(p.accent_blue).strong());
+
+                        ui.horizontal(|ui| {
+                            // Trim button
+                            if ui.button(RichText::new("⚡ Dọn").size(10.5)).clicked() {
+                                let freed = trim_single_process(proc.pid);
+                                self.process_action_msg = format!("✓ Đã thu hồi {} từ '{}' (PID {})", format_bytes(freed), proc.name, proc.pid);
+                                self.mem_stats = get_memory_stats();
+                            }
+
+                            // Eco button
+                            if ui.button(RichText::new("🍃 Eco").size(10.5)).clicked() {
+                                if set_process_eco_mode(proc.pid, true) {
+                                    self.process_action_msg = format!("✓ Đã bật EcoQoS cho '{}' (PID {})", proc.name, proc.pid);
+                                }
+                            }
+
+                            // Terminate button
+                            if ui.add(egui::Button::new(RichText::new("❌").size(10.5).color(p.danger_red))).clicked() {
+                                if terminate_process(proc.pid) {
+                                    self.process_action_msg = format!("✓ Đã kết thúc tiến trình '{}' (PID {})", proc.name, proc.pid);
+                                }
+                            }
+                        });
+
                         ui.end_row();
                     }
                 });
@@ -1189,7 +1285,7 @@ impl OptimizerApp {
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("🛡️ WINDOWS TELEMETRY & DIATTRACK (CHỐNG THEO DÕI NỀN)").size(13.0).strong().color(p.accent_blue));
+                    ui.label(RichText::new("🛡️ WINDOWS TELEMETRY & DIAGTRACK (CHỐNG THEO DÕI NỀN)").size(13.0).strong().color(p.accent_blue));
                     ui.label(
                         RichText::new("Dịch vụ DiagTrack âm thầm thu thập nhật ký và gửi về Microsoft, tiêu tốn CPU và I/O ổ đĩa nền.")
                             .size(11.5)
@@ -1234,7 +1330,7 @@ impl OptimizerApp {
 
         ui.add_space(8.0);
 
-        // Startup Applications List Card
+        // Startup Applications List Card with Direct Toggle
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("ỨNG DỤNG KHỞI ĐỘNG CÙNG WINDOWS").size(12.5).strong().color(p.accent_blue));
@@ -1244,30 +1340,67 @@ impl OptimizerApp {
                     }
                 });
             });
+
+            if !self.startup_action_msg.is_empty() {
+                ui.add_space(2.0);
+                ui.label(RichText::new(&self.startup_action_msg).size(12.0).strong().color(p.success_green));
+            }
+
             ui.separator();
             ui.add_space(2.0);
 
             egui::Grid::new("startup_grid")
                 .striped(true)
-                .min_col_width(70.0)
-                .spacing(Vec2::new(14.0, 5.0))
+                .min_col_width(60.0)
+                .spacing(Vec2::new(10.0, 5.0))
                 .show(ui, |ui| {
                     ui.label(RichText::new("Tên ứng dụng").size(11.5).strong().color(p.text_secondary));
-                    ui.label(RichText::new("Vị trí đăng ký").size(11.5).strong().color(p.text_secondary));
-                    ui.label(RichText::new("Lệnh khởi động").size(11.5).strong().color(p.text_secondary));
+                    ui.label(RichText::new("Trạng thái").size(11.5).strong().color(p.text_secondary));
+                    ui.label(RichText::new("Hành động").size(11.5).strong().color(p.text_secondary));
+                    ui.label(RichText::new("Vị trí").size(11.5).strong().color(p.text_secondary));
                     ui.end_row();
 
-                    for app in &self.startup_apps {
+                    for app in &mut self.startup_apps {
                         ui.label(RichText::new(&app.name).size(11.5).strong().color(p.text_primary));
+
+                        let (status_str, status_color) = if app.is_enabled {
+                            ("✓ Đang bật", p.success_green)
+                        } else {
+                            ("✗ Đã tắt", p.text_secondary)
+                        };
+                        ui.label(RichText::new(status_str).size(11.0).strong().color(status_color));
+
+                        let toggle_btn = if app.is_enabled {
+                            egui::Button::new(RichText::new("Tắt").size(10.5).color(Color32::WHITE))
+                                .fill(p.danger_red)
+                                .corner_radius(CornerRadius::same(4))
+                        } else {
+                            egui::Button::new(RichText::new("Bật").size(10.5).color(Color32::WHITE))
+                                .fill(p.primary_btn)
+                                .corner_radius(CornerRadius::same(4))
+                        };
+
+                        if ui.add(toggle_btn).clicked() {
+                            let new_state = !app.is_enabled;
+                            if toggle_startup_item(&app.name, &app.location, new_state) {
+                                app.is_enabled = new_state;
+                                self.startup_action_msg = format!(
+                                    "✓ Đã {} khởi động cho '{}'",
+                                    if new_state { "bật" } else { "tắt" },
+                                    app.name
+                                );
+                            }
+                        }
+
                         let short_loc = if app.location.contains("Startup") {
-                            "Folder Startup".to_string()
+                            "Startup Folder".to_string()
                         } else if app.location.contains("HKLM") {
                             "Registry HKLM".to_string()
                         } else {
                             "Registry HKCU".to_string()
                         };
-                        ui.label(RichText::new(short_loc).size(11.5).color(p.accent_blue));
-                        ui.label(RichText::new(&app.command).size(11.0).color(p.text_secondary));
+                        ui.label(RichText::new(short_loc).size(11.0).color(p.accent_blue));
+
                         ui.end_row();
                     }
                 });
