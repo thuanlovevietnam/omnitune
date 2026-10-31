@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod autonomous_engine;
 mod battery_info;
 mod cleaner;
 mod eco_qos;
@@ -41,8 +42,9 @@ fn main() -> eframe::Result {
             )
         };
 
-        let w = 740.0f32.min(screen_w - 30.0);
-        let h = 570.0f32.min(screen_h - 40.0).max(480.0);
+        // Compact autonomous assistant widget size: 440x560 px
+        let w = 440.0f32.min(screen_w - 20.0);
+        let h = 560.0f32.min(screen_h - 20.0).max(480.0);
         let x = ((screen_w - w) / 2.0).max(0.0);
         let y = ((screen_h - h) / 2.0).max(0.0);
         (x, y, w, h)
@@ -52,9 +54,9 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Glow,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([win_w, win_h])
-            .with_min_inner_size([640.0, 460.0])
+            .with_min_inner_size([400.0, 480.0])
             .with_position([pos_x, pos_y])
-            .with_title("OmniTune - Universal System & Hardware Optimizer"),
+            .with_title("OmniTune - Autonomous System Assistant"),
         ..Default::default()
     };
 

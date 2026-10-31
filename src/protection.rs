@@ -6,6 +6,7 @@ use sysinfo::Disks;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct DiskInfo {
     pub name: String,
     pub mount_point: String,

@@ -8,6 +8,7 @@ pub enum ThemeMode {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct ThemePalette {
     pub is_dark: bool,
     pub bg_main: Color32,

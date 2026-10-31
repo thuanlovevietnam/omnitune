@@ -5,6 +5,7 @@ use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATU
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct PowerStatus {
     pub is_ac_online: bool,
     pub battery_percent: u8,

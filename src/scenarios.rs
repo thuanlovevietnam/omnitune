@@ -14,6 +14,7 @@ use windows_sys::Win32::System::Threading::{
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Scenario {
     Default,
     RemoteDesktop,

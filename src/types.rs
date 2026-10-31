@@ -1,9 +1,7 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tab {
-    SmartCenter,
-    TuningMatrix,
-    ResourceRelief,
-    HardwareGuard,
+    Widget,
+    AdvancedSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +12,7 @@ pub enum CleanTier {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct JunkCategory {
     pub name: String,
     pub path_desc: String,
@@ -54,4 +53,11 @@ pub struct StartupAppItem {
     pub location: String,
     pub user: String,
     pub is_enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActivityEvent {
+    pub time: String,
+    pub icon: &'static str,
+    pub message: String,
 }

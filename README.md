@@ -1,66 +1,54 @@
-# ⚡ OmniTune - Universal System & Hardware Optimizer
+# ⚡ OmniTune - Autonomous System Assistant
 
-Ứng dụng tối ưu hóa hệ thống, phần cứng và thời lượng pin chuyên sâu cho Windows (PC & Laptop), được viết 100% bằng **Rust** kết hợp Win32 API trực tiếp và GUI `egui/eframe`.
-
-Thiết kế theo mô hình **Tinh Gọn & Thông Minh (Streamlined Context-Aware Architecture)** với 4 phân hệ cốt lõi.
+Trợ lý tối ưu hóa hệ thống, phần cứng và thời lượng pin **tự hành thông minh (Zero-Click Autonomous Assistant)** cho Windows (PC & Laptop), được viết 100% bằng **Rust** kết hợp Win32 API trực tiếp và GUI `egui/eframe`.
 
 ---
 
-## 🚀 4 Phân Hệ Tinh Gọn Cốt Lõi
+## 🌟 Trải Nghiệm Mới: Widget Tự Hành Thông Minh (Zero-Click Autonomous Widget)
 
-### 1. 🎯 Trung Tâm Thông Minh (Smart Center & Auto-Pilot)
-*Điều phối tự động toàn diện trên một giao diện trang chủ duy nhất:*
-- **Chỉ số Sức khỏe PC (Health Score 0-100):** Đánh giá tổng hợp kèm lời khuyên chẩn đoán thông minh (RAM cao, rác nhiều, cắm sạc liên tục cần bật ngưỡng pin 80%).
-- **Nút "⚡ TỐI ƯU TOÀN DIỆN" (1-Click):** Dọn rác an toàn Tầng 1 + Thu hồi RAM + Áp cờ EcoQoS cho các app nền + Cân bằng xung nhịp.
-- **3 Đồng hồ đo Thời gian thực:** CPU % (Chip & Nhân/Luồng) • RAM % (Đã dùng/Tổng/Trống) • Pin % (Công suất tiêu thụ thực tế theo Watt & Điện áp V).
-- **Cửa sổ Đang Focus (Foreground Auto-Boost):** Tự động phát hiện cửa sổ đang dùng, gỡ bỏ giới hạn xung nhịp và nâng quyền ưu tiên luồng xử lý (`ABOVE_NORMAL_PRIORITY_CLASS`).
-- **EcoQoS (Windows Efficiency Mode):** Tự động điều tiết tiết kiệm điện `PROCESS_POWER_THROTTLING_EXECUTION_SPEED` cho các app chạy ngầm (Drive, OneDrive, tab browser nền, Search Indexer).
-- **Bộ 5 Kịch bản Tinh chỉnh & Chế độ Auto-Pilot:**
-  - 🖥️ **Remote Desktop:** Khóa chống Sleep/Lock, CPU 65% máy mát 40°C không quạt 0dB, QuickSync giải mã video, tối ưu TCP buffer giảm trễ chuột, đóng băng app sync.
-  - 🎮 **Gaming & Đồ họa:** Timer 1.0ms (`timeBeginPeriod(1)`), tắt GameDVR nền, CPU 90% nhường 12W TDP cho GPU Intel HD 620 đạt 1150MHz, dọn RAM mở rộng VRAM.
-  - ☕ **Cà phê / Siêu tiết kiệm pin:** Khóa trần CPU 60% (~4W), quạt tắt (Passive), độ sáng 45%, đóng băng app ngầm.
-  - 💻 **Lập trình & Biên dịch (Developer):** 100% Turbo Boost 3.9GHz, quạt tản nhiệt chủ động, ưu tiên CPU cho `rustc`, `cargo`, `go`.
-  - 🎬 **Xem phim & Thư giãn:** Khóa chống tắt màn hình, CPU 55% êm ru 0dB, màn hình sáng 70%.
+Thay vì buộc người dùng phải tự làm kỹ sư hệ thống với hàng chục tab và thanh trượt phức tạp, **OmniTune** chuyển đổi sang mô hình **Trợ lý tự hành**:
+
+- **Kích thước Widget mini:** `440 x 560 px`, hiển thị gọn gàng ngay giữa màn hình.
+- **Tự động nhận diện ngữ cảnh 24/7 (Auto-Pilot):**
+  - Mở Game -> Tự kích hoạt Timer 1.0ms, tắt GameDVR, cấp 100% GPU, dọn VRAM.
+  - Mở Remote Desktop (`MiniRemote`, `RustDesk`, `RDP`) -> Tự khóa sleep, hãm CPU 65% mát 40°C, quạt êm 0dB, đóng băng sync để giữ chuột nhạy 0ms.
+  - Rút sạc -> Tự hạ xung 65% (~4W), tắt quạt tản nhiệt, hạ độ sáng 45% (kéo dài pin 6 - 8 tiếng).
+  - Cắm sạc -> Tự bung 100% Turbo Boost và khôi phục hiệu năng tối đa.
+  - Compile code -> Tự cấp quyền ưu tiên cao cho `cargo`, `rustc`, `go`.
+- **Nhật ký tự hành thời gian thực (Live Autonomous Stream):** Hiển thị minh bạch từng hành động ứng dụng vừa tự động tối ưu ngầm dưới máy.
+- **Bảng điều khiển chuyên sâu [⚙️ Tinh chỉnh]:** Mở ra ma trận 10 tiêu chí phần cứng, dọn rác 3 tầng, giám sát tiến trình và cảm biến pin khi cần can thiệp sâu.
 
 ---
 
-### 2. 🎛️ Bảng Ma Trận Tinh Chỉnh (10-Criteria Tuning Matrix)
-*Khung bảng biểu hợp nhất 2 cột: Cột 1 Tiêu chí phần cứng (135px) • Cột 2 Điều khiển trực tiếp & Kiến nghị:*
+## 🚀 Tính năng cốt lõi
 
-| Tiêu chí | Công cụ setup & Tinh chỉnh tương tác trực tiếp |
-| :--- | :--- |
-| **1. ⚡ Xung CPU & TDP** | Thanh trượt trần CPU Pin (DC) & Sạc (AC) + Nút nhanh `60% Pin`, `80% Cân bằng`, `100% Turbo`. |
-| **2. ⏱️ Timer & FPS** | Nút chuyển đổi Win32 `1.0 ms` (triệt tiêu lag chuột/stutter) vs `15.6 ms` (mặc định tiết kiệm điện). |
-| **3. 🍃 EcoQoS Nền** | Checkbox tự động điều phối EcoQoS + Nút bấm ép EcoQoS toàn bộ app ngầm ngay lập tức. |
-| **4. 🧠 RAM & VRAM** | Checkbox tự động thu hồi khi RAM vượt ngưỡng tùy chỉnh (70% - 95%) + Nút thu hồi RAM tức thì. |
-| **5. 🌐 Mạng & Sync** | Nút kích hoạt TCP Low-Latency qua `netsh` + Nút đóng băng / phục hồi dịch vụ sync đám mây. |
-| **6. 🔌 Chống Sleep** | Lựa chọn 3 chế độ: `Mặc định OS` \| `Giữ máy luôn thức` \| `Giữ cả Màn hình & Máy sáng`. |
-| **7. ❄️ Quạt làm mát** | Nút chọn chính sách quạt: `Thụ động (Passive 0dB)` vs `Chủ động (Active làm mát sớm)`. |
-| **8. 🔆 Độ sáng** | Thanh trượt độ sáng màn hình qua WMI ACPI + Nút nhanh `45% Pin`, `50% VP`, `70% Phim`. |
-| **9. 🎬 GameDVR** | Nút tắt GameDVR nền (giải phóng GPU encoder) vs Bật lại theo mặc định Windows. |
-| **10. 🛡️ Ngưỡng sạc & Ngủ** | Nút Bật/Tắt ngưỡng sạc pin 80% (Lenovo PM Service) + Nút kích hoạt chế độ ngủ đông Hibernate. |
+### 1. 🎯 Trung Tâm Sức Khỏe & Auto-Pilot
+- **PC Health Score (0 - 100):** Tự động phát hiện dung lượng rác SSD, áp lực RAM, trạng thái Telemetry để đưa ra khuyến nghị tức thì.
+- **Nút "⚡ TỐI ƯU HÓA TỨC THÌ (1-CLICK)":** Dọn rác an toàn Tầng 1 + Thu hồi RAM nhàn rỗi + Ép EcoQoS app ngầm.
+- **3 Chip Vitals Tối giản:**
+  - `CPU`: % tải thực tế • Model chip • Số nhân/luồng.
+  - `RAM`: % tải • Đã dùng / Tổng • Dung lượng trống.
+  - `PIN`: % pin • Công suất tiêu thụ thực tế theo **Watt** • Điện áp **V**.
+- **Cửa sổ Focus Auto-Boost & EcoQoS:** Nhận diện cửa sổ đang làm việc để nâng luồng ưu tiên, tự động ép các ứng dụng nền (Chrome/Drive/OneDrive) vào cờ tiết kiệm điện `PROCESS_POWER_THROTTLING_EXECUTION_SPEED`.
 
----
+### 2. 🎛️ Ma Trận Tinh Chỉnh Chuyên Sâu [⚙️]
+- **Bảng 2 cột:** Cột 1 Tiêu chí (135px) • Cột 2 Điều khiển trực tiếp & Kiến nghị tối ưu:
+  - Xung CPU & TDP (DC Pin / AC Sạc).
+  - Độ trễ Timer 1.0ms vs 15.6ms.
+  - Độ sáng màn hình qua WMI ACPI.
+  - Chính sách quạt tản nhiệt (Passive 0dB vs Active).
+  - Tắt GameDVR nền & Khóa chống Sleep màn hình.
+  - Ngưỡng sạc pin 80% (Lenovo PM Service) & Chế độ ngủ đông Hibernate.
 
-### 3. 🧹 Dọn Rác & Điều Phối RAM (Resource Relief)
-- **Bộ Dọn dẹp Rác 3 Tầng Phân loại:**
-  - 🛡️ **Tầng 1 - Rác An toàn 100%:** User Temp, System Temp, Thùng rác (Recycle Bin), Crash Dumps, Edge/Chrome Cache.
-  - 💻 **Tầng 2 - Rác Developer:** Node.js/NPM Cache (`%LOCALAPPDATA%\npm-cache` - dung lượng hàng GB), Go Build, Cargo Crates, Pip Cache.
-  - ⚙️ **Tầng 3 - Bảo trì Hệ thống:** Windows Update Download Cache, Prefetch.
-- **Điều phối RAM & Process Inspector:**
-  - Thanh trạng thái RAM + Checkbox tự động dọn khi RAM > 85%.
-  - Ô tìm kiếm tiến trình (Search Bar lọc theo tên ứng dụng hoặc PID).
-  - Thao tác trực tiếp trên từng tiến trình: `⚡ Dọn` (thu hồi Working Set riêng), `🍃 Eco` (áp dụng EcoQoS), `❌` (kết thúc an toàn).
+### 3. 🧹 Bộ Dọn Rác 3 Tầng & Process Inspector [⚙️]
+- **3 Tầng Rác:** 🛡️ Tầng 1 Rác An toàn 100% • 💻 Tầng 2 Rác Developer (NPM Cache 3.3GB, Go Build, Cargo Cache) • ⚙️ Tầng 3 Bảo trì hệ thống.
+- **Process Inspector:** Tìm kiếm tiến trình, thu hồi RAM riêng từng app, ép EcoQoS, hoặc kết thúc tiến trình bị treo.
 
----
-
-### 4. 🛡️ Khởi Động & Bảo Vệ Phần Cứng (Hardware Guard)
-- **S.M.A.R.T NVMe SSD Health:** Đọc trực tiếp tình trạng sức khỏe phần cứng ổ đĩa (`Healthy / OK`) và đo % dung lượng các phân vùng.
-- **Cảm biến ACPI Pin Kép:** Đọc dung lượng thiết kế, dung lượng nạp đầy, số chu kỳ sạc, % chai pin, điện áp thời gian thực (V) và công suất dòng xả/nạp (mW / Watt).
-- **Khóa Ngưỡng Sạc Pin 80%:** Ngắt sạc khi pin đạt 80% để chống phồng rộp và chai pin khi cắm sạc liên tục tại bàn làm việc.
-- **Chế độ Ngủ đông (Hibernate):** Quản lý trạng thái ngắt điện hoàn toàn khi gập máy.
-- **Windows Telemetry Debloat:** 1-Click vô hiệu hóa dịch vụ thu thập dữ liệu ngầm `DiagTrack` của Windows, giảm tải CPU và ổ đĩa nền.
-- **Bật / Tắt Ứng dụng Khởi động 1-Click:** Chuẩn cơ chế `StartupApproved` của Windows Task Manager.
+### 4. 🛡️ Khởi Động & Bảo Vệ Phần Cứng [⚙️]
+- S.M.A.R.T NVMe SSD Health (`Healthy / OK`).
+- Cảm biến ACPI Pin Kép ThinkPad (Dung lượng thiết kế, dung lượng nạp đầy, số lần chu kỳ sạc, % chai pin).
+- Tắt dịch vụ theo dõi ngầm `DiagTrack` của Windows.
+- Bật / Tắt ứng dụng khởi động cùng Windows 1-Click (`StartupApproved`).
 
 ---
 
