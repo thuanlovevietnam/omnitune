@@ -1,13 +1,45 @@
 use crate::cleaner::format_bytes;
 use crate::eco_qos::{apply_foreground_boost_and_eco, get_foreground_process};
+use crate::hardware_profile::{get_user_idle_ms, HardwareProfile};
 use crate::memory::trim_working_sets;
-use crate::power::{set_brightness, set_cooling_policy, set_cpu_max_state_dc, set_power_scheme};
 use crate::scenarios::{apply_scenario, detect_recommended_scenario, Scenario};
 use crate::types::ActivityEvent;
-use sysinfo::System;
+use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
+use sysinfo::System;
 use windows_sys::Win32::Foundation::SYSTEMTIME;
 use windows_sys::Win32::System::SystemInformation::GetLocalTime;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OperatingMode {
+    /// Chế độ 1: Tối ưu nhất dựa trên cấu hình Hệ điều hành và Máy (Không hardcode)
+    HardwareOptimal,
+    /// Chế độ 2: Tự động tối ưu dựa trên chế độ làm việc (Workload Adaptive)
+    WorkloadAdaptive,
+}
+
+impl Default for OperatingMode {
+    fn default() -> Self {
+        OperatingMode::WorkloadAdaptive
+    }
+}
+
+#[allow(dead_code)]
+impl OperatingMode {
+    pub fn name(&self) -> &'static str {
+        match self {
+            OperatingMode::HardwareOptimal => "Tối ưu nhất (Phần cứng & OS)",
+            OperatingMode::WorkloadAdaptive => "Tự động tối ưu (Theo công việc)",
+        }
+    }
+
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            OperatingMode::HardwareOptimal => "Tối ưu Phần Cứng",
+            OperatingMode::WorkloadAdaptive => "Tự Động Công Việc",
+        }
+    }
+}
 
 pub fn get_current_time_str() -> String {
     unsafe {
@@ -26,10 +58,12 @@ pub struct AutonomousEngine {
     pub eco_qos_enabled: bool,
     pub auto_ram_enabled: bool,
     pub last_ram_trim: Instant,
+    pub hardware_profile: HardwareProfile,
+    pub operating_mode: OperatingMode,
 }
 
 impl AutonomousEngine {
-    pub fn new() -> Self {
+    pub fn new(hw: HardwareProfile, mode: OperatingMode) -> Self {
         let mut engine = Self {
             activity_log: Vec::new(),
             current_scenario: Scenario::Default,
@@ -39,9 +73,20 @@ impl AutonomousEngine {
             eco_qos_enabled: true,
             auto_ram_enabled: true,
             last_ram_trim: Instant::now(),
+            hardware_profile: hw,
+            operating_mode: mode,
         };
 
-        engine.log("[START]", "Hệ thống tự hành OmniTune Auto-Pilot đã khởi động.".to_string());
+        engine.log(
+            "[START]",
+            format!(
+                "Hệ thống khởi động: OS {} • CPU {} nhân • RAM {:.1}GB • GPU [{}].",
+                engine.hardware_profile.os_name,
+                engine.hardware_profile.cpu_logical_cores,
+                engine.hardware_profile.ram_total_gb,
+                engine.hardware_profile.gpu_name
+            ),
+        );
         engine
     }
 
@@ -57,6 +102,44 @@ impl AutonomousEngine {
         }
     }
 
+    pub fn set_operating_mode(
+        &mut self,
+        mode: OperatingMode,
+        sys: &mut System,
+        is_ac: bool,
+        battery_pct: u8,
+    ) {
+        self.operating_mode = mode;
+        match mode {
+            OperatingMode::HardwareOptimal => {
+                let msgs = self.hardware_profile.apply_hardware_optimal(is_ac, battery_pct);
+                self.log(
+                    "[PHẦN CỨNG]",
+                    format!(
+                        "Kích hoạt Chế độ Tối ưu Phần Cứng & OS ({} nhân, {:.1}GB RAM, SSD: {}).",
+                        self.hardware_profile.cpu_logical_cores,
+                        self.hardware_profile.ram_total_gb,
+                        self.hardware_profile.is_ssd
+                    ),
+                );
+                for msg in msgs {
+                    self.log("[ÁP DỤNG]", msg);
+                }
+            }
+            OperatingMode::WorkloadAdaptive => {
+                let idle_ms = get_user_idle_ms();
+                if let Some(target_scen) = detect_recommended_scenario(sys, is_ac, battery_pct, idle_ms) {
+                    self.current_scenario = target_scen;
+                    let msg = apply_scenario(target_scen, sys, &self.hardware_profile, is_ac, battery_pct);
+                    self.log(
+                        "[TỰ ĐỘNG]",
+                        format!("Kích hoạt Tự Động Theo Công Việc -> [{}]: {}", target_scen.name(), msg),
+                    );
+                }
+            }
+        }
+    }
+
     pub fn tick(
         &mut self,
         sys: &mut System,
@@ -64,33 +147,45 @@ impl AutonomousEngine {
         battery_pct: u8,
         ram_load_pct: u32,
     ) {
+        let idle_ms = get_user_idle_ms();
+
         // 1. Cảm biến nguồn điện (AC/DC Transition Sensor)
         if let Some(prev_ac) = self.last_power_ac {
             if prev_ac != is_ac {
-                if !is_ac {
-                    // Rút sạc -> Tự động kích hoạt chế độ tiết kiệm pin
-                    let _ = set_power_scheme("SCHEME_MAX");
-                    let _ = set_cpu_max_state_dc(65);
-                    let _ = set_cooling_policy(false); // Quạt tắt
-                    let _ = set_brightness(45);
-                    self.current_scenario = Scenario::CafeMobility;
-                    self.log(
-                        "[PIN]",
-                        format!(
-                            "Rút sạc (Pin {}%) -> Tự động tiết kiệm pin: CPU 65% (~4W), quạt 0dB, màn hình 45%.",
-                            battery_pct
-                        ),
-                    );
+                if self.operating_mode == OperatingMode::HardwareOptimal {
+                    let msgs = self.hardware_profile.apply_hardware_optimal(is_ac, battery_pct);
+                    for m in msgs {
+                        self.log("[NGUỒN]", m);
+                    }
                 } else {
-                    // Cắm sạc -> Khôi phục hiệu năng tối đa
-                    let _ = set_power_scheme("SCHEME_BALANCED");
-                    let _ = set_cooling_policy(true);
-                    let _ = set_brightness(70);
-                    self.current_scenario = Scenario::Default;
-                    self.log(
-                        "[NGUỒN]",
-                        "Cắm sạc AC -> Tự động khôi phục xung nhịp CPU 100%, quạt tản nhiệt chủ động.".to_string(),
-                    );
+                    // WorkloadAdaptive mode on AC/DC change
+                    if !is_ac {
+                        self.current_scenario = Scenario::CafeMobility;
+                        let msg = apply_scenario(
+                            Scenario::CafeMobility,
+                            sys,
+                            &self.hardware_profile,
+                            is_ac,
+                            battery_pct,
+                        );
+                        self.log(
+                            "[PIN]",
+                            format!("Rút sạc (Pin {}%) -> Tự động chuyển kịch bản di động: {}", battery_pct, msg),
+                        );
+                    } else {
+                        self.current_scenario = Scenario::Default;
+                        let msg = apply_scenario(
+                            Scenario::Default,
+                            sys,
+                            &self.hardware_profile,
+                            is_ac,
+                            battery_pct,
+                        );
+                        self.log(
+                            "[NGUỒN]",
+                            format!("Cắm sạc AC -> Khôi phục hiệu năng tối đa: {}", msg),
+                        );
+                    }
                 }
             }
         }
@@ -121,21 +216,45 @@ impl AutonomousEngine {
                 }
             }
 
-            // Tự động nhận diện kịch bản (Auto-Pilot Scenario Detection)
-            if self.auto_pilot_enabled {
-                if let Some(target_scen) = detect_recommended_scenario(sys, is_ac, battery_pct) {
+            // Tự động nhận diện theo chế độ làm việc (chỉ khi đang ở chế độ WorkloadAdaptive và auto_pilot_enabled)
+            if self.operating_mode == OperatingMode::WorkloadAdaptive && self.auto_pilot_enabled {
+                if let Some(target_scen) = detect_recommended_scenario(sys, is_ac, battery_pct, idle_ms) {
                     if target_scen != self.current_scenario {
                         self.current_scenario = target_scen;
-                        let msg = apply_scenario(target_scen, sys);
-                        self.log("[CHUYỂN]", format!("Chuyển sang [{}]: {}", target_scen.name(), msg));
+                        let msg = apply_scenario(
+                            target_scen,
+                            sys,
+                            &self.hardware_profile,
+                            is_ac,
+                            battery_pct,
+                        );
+                        self.log("[CHUYỂN]", format!("Phát hiện tác vụ [{}]: {}", target_scen.name(), msg));
                     }
                 }
             }
         }
 
-        // 3. Tự động thu hồi RAM khi vượt ngưỡng 85% (Memory Watchdog có cooldown 60s)
+        // Kiểm tra nhàn rỗi (Idle) định kỳ trong chế độ tự động
+        if self.operating_mode == OperatingMode::WorkloadAdaptive
+            && self.auto_pilot_enabled
+            && idle_ms >= 300_000
+            && self.current_scenario != Scenario::IdlePowerSave
+        {
+            self.current_scenario = Scenario::IdlePowerSave;
+            let msg = apply_scenario(
+                Scenario::IdlePowerSave,
+                sys,
+                &self.hardware_profile,
+                is_ac,
+                battery_pct,
+            );
+            self.log("[NGHỈ]", msg);
+        }
+
+        // 3. Tự động thu hồi RAM khi vượt ngưỡng động (Tính theo dung lượng RAM thực tế của máy, KHÔNG hardcode)
+        let ram_threshold = self.hardware_profile.dynamic_ram_threshold_pct;
         if self.auto_ram_enabled
-            && ram_load_pct >= 85
+            && ram_load_pct >= ram_threshold
             && self.last_ram_trim.elapsed() >= Duration::from_secs(60)
         {
             self.last_ram_trim = Instant::now();
@@ -144,8 +263,9 @@ impl AutonomousEngine {
                 self.log(
                     "[RAM]",
                     format!(
-                        "RAM chạm {}% -> Tự động thu hồi {} bộ nhớ nhàn rỗi từ {} tiến trình.",
+                        "RAM chạm {}% (ngưỡng máy {:.1}GB) -> Tự động thu hồi {} bộ nhớ từ {} tiến trình.",
                         ram_load_pct,
+                        self.hardware_profile.ram_total_gb,
                         format_bytes(freed),
                         count
                     ),

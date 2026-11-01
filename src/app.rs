@@ -1,4 +1,4 @@
-use crate::autonomous_engine::AutonomousEngine;
+use crate::autonomous_engine::{AutonomousEngine, OperatingMode};
 use crate::battery_info::get_dual_battery_info;
 use crate::cleaner::{
     clean_target, format_bytes, get_default_targets, scan_target,
@@ -13,7 +13,7 @@ use crate::memory::{
 use crate::power::{
     get_cooling_policy, get_gamedvr,
     get_power_status, set_brightness, set_cooling_policy, set_cpu_max_state_ac,
-    set_cpu_max_state_dc, set_gamedvr, set_keep_awake, set_power_scheme, set_timer_resolution_1ms,
+    set_cpu_max_state_dc, set_gamedvr, set_keep_awake, set_timer_resolution_1ms,
     PowerStatus,
 };
 use crate::protection::{
@@ -122,7 +122,7 @@ impl OptimizerApp {
         let theme_mode = ThemeMode::Light;
         let palette = apply_theme(&cc.egui_ctx, theme_mode);
 
-        let sys = System::new().expect("failed to initialize sysinfo");
+        let mut sys = System::new().expect("failed to initialize sysinfo");
         let mem_stats = get_memory_stats();
         let power_status = get_power_status();
         let license = load_license();
@@ -232,7 +232,8 @@ impl OptimizerApp {
             }));
         });
 
-        let mut autonomous = AutonomousEngine::new();
+        let hw = crate::hardware_profile::HardwareProfile::detect(&mut sys);
+        let mut autonomous = AutonomousEngine::new(hw, config.operating_mode);
         autonomous.auto_pilot_enabled = config.auto_pilot_enabled;
         autonomous.log(
             "[TỐC ĐỘ]",
@@ -291,6 +292,7 @@ impl OptimizerApp {
         self.config.cooling_active = self.cooling_active;
         self.config.gamedvr_enabled = self.gamedvr_enabled;
         self.config.auto_pilot_enabled = self.autonomous.auto_pilot_enabled;
+        self.config.operating_mode = self.autonomous.operating_mode;
         self.config.battery_threshold_80 = self.protection.battery_threshold_enabled;
         self.config.run_on_startup = self.run_on_startup;
         save_config(&self.config);
@@ -310,7 +312,7 @@ impl OptimizerApp {
         let total_junk: u64 = self.clean_categories.iter().map(|c| c.size_bytes).sum();
         if total_junk > 2 * 1024 * 1024 * 1024 {
             score -= 20;
-            tips.push(format!("Phát hiện {} rác/cache trên ổ SSD, khuyến nghị dọn dẹp.", format_bytes(total_junk)));
+            tips.push(format!("Phát hiện {} rác/cache trên ổ {}, khuyến nghị dọn dẹp.", format_bytes(total_junk), self.autonomous.hardware_profile.disk_name));
         } else if total_junk > 500 * 1024 * 1024 {
             score -= 10;
             tips.push(format!("Tìm thấy {} file rác an toàn có thể giải phóng.", format_bytes(total_junk)));
@@ -481,11 +483,11 @@ impl OptimizerApp {
 
         let (freed_ram, count) = trim_working_sets(&mut self.sys);
 
-        let _ = set_cpu_max_state_dc(80);
-        if !self.power_status.is_ac_online {
-            let _ = set_power_scheme("SCHEME_MAX");
-        }
-        crate::power::apply_permanent_windows_system_tweaks();
+        // Áp dụng tối ưu phần cứng động (không hardcode)
+        let _ = self.autonomous.hardware_profile.apply_hardware_optimal(
+            self.power_status.is_ac_online,
+            self.power_status.battery_percent,
+        );
 
         let (_, eco_count) = apply_foreground_boost_and_eco(
             &self.sys,
@@ -496,11 +498,13 @@ impl OptimizerApp {
         self.top_processes = get_top_processes(&mut self.sys, 25);
 
         let msg = format!(
-            "Dọn {} rác ({} files), thu hồi {} RAM từ {} app, ép EcoQoS {} app nền.",
+            "Dọn {} rác ({} files), thu hồi {} RAM từ {} app, tối ưu phần cứng ({} nhân, SSD: {}), ép EcoQoS {} app nền.",
             format_bytes(freed_junk),
             deleted_files,
             format_bytes(freed_ram),
             count,
+            self.autonomous.hardware_profile.cpu_logical_cores,
+            self.autonomous.hardware_profile.is_ssd,
             eco_count
         );
         self.quick_opt_msg = format!("✓ {}", msg);
@@ -712,6 +716,52 @@ impl OptimizerApp {
             ui.add_space(6.0);
         }
 
+        // --- 2 CHẾ ĐỘ TỐI ƯU HÓA HỆ THỐNG (HARDWARE OPTIMAL VS WORKLOAD ADAPTIVE) ---
+        ui.horizontal(|ui| {
+            let is_hw = self.autonomous.operating_mode == OperatingMode::HardwareOptimal;
+            let hw_btn = egui::Button::new(
+                RichText::new(if is_hw { "● 1. TỐI ƯU PHẦN CỨNG & OS" } else { "○ 1. Tối ưu Phần Cứng & OS" })
+                    .size(11.5)
+                    .strong()
+                    .color(if is_hw { Color32::WHITE } else { p.text_secondary }),
+            )
+            .fill(if is_hw { p.primary_btn } else { p.card_bg })
+            .stroke(Stroke::new(1.0, if is_hw { p.primary_btn } else { p.card_border }))
+            .corner_radius(CornerRadius::same(6));
+
+            if ui.add(hw_btn).on_hover_text("Chế độ 1: Tối ưu chuẩn xác dựa trên OS, CPU, RAM, SSD/HDD, GPU thực tế của máy (Không hardcode)").clicked() {
+                self.autonomous.set_operating_mode(
+                    OperatingMode::HardwareOptimal,
+                    &mut self.sys,
+                    self.power_status.is_ac_online,
+                    self.power_status.battery_percent,
+                );
+                self.sync_config();
+            }
+
+            let is_wl = self.autonomous.operating_mode == OperatingMode::WorkloadAdaptive;
+            let wl_btn = egui::Button::new(
+                RichText::new(if is_wl { "● 2. TỰ ĐỘNG THEO CÔNG VIỆC" } else { "○ 2. Tự Động Theo Công Việc" })
+                    .size(11.5)
+                    .strong()
+                    .color(if is_wl { Color32::WHITE } else { p.text_secondary }),
+            )
+            .fill(if is_wl { p.accent_blue } else { p.card_bg })
+            .stroke(Stroke::new(1.0, if is_wl { p.accent_blue } else { p.card_border }))
+            .corner_radius(CornerRadius::same(6));
+
+            if ui.add(wl_btn).on_hover_text("Chế độ 2: Tự động điều tiết theo tác vụ đang làm (Dev, Game, Họp, Xem phim, Di động, Nghỉ ngơi)").clicked() {
+                self.autonomous.set_operating_mode(
+                    OperatingMode::WorkloadAdaptive,
+                    &mut self.sys,
+                    self.power_status.is_ac_online,
+                    self.power_status.battery_percent,
+                );
+                self.sync_config();
+            }
+        });
+        ui.add_space(6.0);
+
         // --- HEALTH & CONTEXT BANNER CARD ---
         let (score, score_label, score_color, tips) = self.calculate_health_score();
         p.modern_card(ui, |ui| {
@@ -728,27 +778,63 @@ impl OptimizerApp {
 
                 ui.add_space(6.0);
 
-                // Smart Detected Context Banner (Word-wrapped)
-                let scen = self.autonomous.current_scenario;
-                let (context_tag, context_name) = match scen {
-                    Scenario::RemoteDesktop => ("[REMOTE]", "Đang Remote Desktop (Tối ưu độ trễ chuột 0ms, quạt 0dB)"),
-                    Scenario::Gaming => ("[GAMING]", "Đang Chơi Game (Timer 1.0ms • Cấp tối đa GPU Intel HD 620)"),
-                    Scenario::CafeMobility => ("[PIN]", "Cà phê / Di động (Siêu tiết kiệm pin ~4W, quạt tắt)"),
-                    Scenario::Developer => ("[DEV]", "Lập trình & Biên dịch (100% Turbo Boost 3.9GHz)"),
-                    Scenario::MediaChill => ("[MEDIA]", "Xem phim & Giải trí (Màn hình luôn sáng • Quạt 0dB)"),
-                    Scenario::Default => ("[CÂN BẰNG]", "Chế độ Cân bằng tiêu chuẩn của Windows"),
-                };
-
-                egui::Frame::new()
-                    .fill(if p.is_dark { Color32::from_rgb(26, 36, 60) } else { Color32::from_rgb(226, 234, 246) })
-                    .corner_radius(CornerRadius::same(6))
-                    .inner_margin(egui::Margin::symmetric(10, 6))
-                    .show(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new(context_tag).size(11.5).strong().color(p.accent_blue));
-                            ui.label(RichText::new(context_name).size(11.5).strong().color(p.text_primary));
+                if self.autonomous.operating_mode == OperatingMode::HardwareOptimal {
+                    // Chế độ 1: Card chi tiết phần cứng & cấu hình tối ưu động
+                    egui::Frame::new()
+                        .fill(if p.is_dark { Color32::from_rgb(26, 36, 60) } else { Color32::from_rgb(226, 234, 246) })
+                        .corner_radius(CornerRadius::same(6))
+                        .inner_margin(egui::Margin::symmetric(10, 8))
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(RichText::new("[CHẾ ĐỘ 1: PHẦN CỨNG & OS]").size(11.5).strong().color(p.accent_blue));
+                                    ui.label(RichText::new(&self.autonomous.hardware_profile.os_name).size(11.5).strong().color(p.text_primary));
+                                });
+                                ui.add_space(3.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(RichText::new(format!(
+                                        "⚡ CPU: {} ({} nhân) | RAM: {:.1}GB (Ngưỡng tự động: {}%)",
+                                        self.autonomous.hardware_profile.cpu_brand,
+                                        self.autonomous.hardware_profile.cpu_logical_cores,
+                                        self.autonomous.hardware_profile.ram_total_gb,
+                                        self.autonomous.hardware_profile.dynamic_ram_threshold_pct
+                                    )).size(10.5).color(p.text_secondary));
+                                });
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(RichText::new(format!(
+                                        "💾 Ổ đĩa: {} ({}) | GPU: {}",
+                                        self.autonomous.hardware_profile.disk_name,
+                                        if self.autonomous.hardware_profile.is_ssd { "SSD - Đã tắt SysMain & NTFS ghi rác" } else { "HDD - Đã bật SysMain Cache" },
+                                        self.autonomous.hardware_profile.gpu_name
+                                    )).size(10.5).color(p.text_secondary));
+                                });
+                            });
                         });
-                    });
+                } else {
+                    // Chế độ 2: Card ngữ cảnh công việc đang nhận diện
+                    let scen = self.autonomous.current_scenario;
+                    let (context_tag, context_name) = match scen {
+                        Scenario::Developer => ("[DEV]", format!("Lập trình & Biên dịch (Mở 100% xung {} nhân, làm mát chủ động)", self.autonomous.hardware_profile.cpu_logical_cores)),
+                        Scenario::Gaming => ("[GAMING]", format!("Đang Chơi Game (Timer 1.0ms • Tối đa GPU {})", self.autonomous.hardware_profile.gpu_name)),
+                        Scenario::OfficeMeeting => ("[VĂN PHÒNG]", "Họp & Làm việc (Giảm trễ TCP, quạt êm chống ồn, chống tắt màn)".to_string()),
+                        Scenario::RemoteDesktop => ("[REMOTE]", "Đang Remote Desktop (Tối ưu mạng TCP & trễ chuột, quạt 0dB)".to_string()),
+                        Scenario::MediaChill => ("[MEDIA]", format!("Xem phim & Thư giãn (Màn hình luôn sáng • GPU {})", self.autonomous.hardware_profile.gpu_name)),
+                        Scenario::CafeMobility => ("[PIN]", format!("Di động / Tiết kiệm pin (Khóa trần CPU {} nhân, quạt tắt)", self.autonomous.hardware_profile.cpu_logical_cores)),
+                        Scenario::IdlePowerSave => ("[NGHỈ]", format!("Nhàn rỗi tự động (Không thao tác > 5p, hạ tải CPU {} nhân)", self.autonomous.hardware_profile.cpu_logical_cores)),
+                        Scenario::Default => ("[CÂN BẰNG]", format!("Chế độ Cân bằng thích ứng ({} nhân, {:.1}GB RAM)", self.autonomous.hardware_profile.cpu_logical_cores, self.autonomous.hardware_profile.ram_total_gb)),
+                    };
+
+                    egui::Frame::new()
+                        .fill(if p.is_dark { Color32::from_rgb(26, 36, 60) } else { Color32::from_rgb(226, 234, 246) })
+                        .corner_radius(CornerRadius::same(6))
+                        .inner_margin(egui::Margin::symmetric(10, 6))
+                        .show(ui, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new(context_tag).size(11.5).strong().color(p.accent_blue));
+                                ui.label(RichText::new(&context_name).size(11.5).strong().color(p.text_primary));
+                            });
+                        });
+                }
 
                 ui.add_space(6.0);
 
@@ -797,7 +883,13 @@ impl OptimizerApp {
                         "⟳ Đang đo".to_string()
                     };
                     ui.heading(RichText::new(cpu_text).size(22.0).strong().color(cpu_color));
-                    ui.label(RichText::new("i7-7600U").size(11.5).strong().color(p.text_primary));
+                    let display_cpu = self.autonomous.hardware_profile.cpu_brand
+                        .replace("(R)", "")
+                        .replace("(TM)", "")
+                        .replace("CPU", "")
+                        .trim()
+                        .to_string();
+                    ui.label(RichText::new(display_cpu).size(11.0).strong().color(p.text_primary));
                     ui.label(RichText::new(&self.cpu_cores_info).size(10.5).color(p.text_secondary));
                 });
             });
@@ -1010,7 +1102,7 @@ impl OptimizerApp {
                     // Row 1: CPU Xung & TDP
                     ui.vertical(|ui| {
                         ui.label(RichText::new("1. Xung CPU & TDP").size(12.0).strong().color(p.text_primary));
-                        ui.label(RichText::new("i7-7600U, TDP 15-25W").size(10.5).color(p.text_secondary));
+                        ui.label(RichText::new(format!("{} ({} nhân)", self.autonomous.hardware_profile.cpu_brand, self.autonomous.hardware_profile.cpu_logical_cores)).size(10.5).color(p.text_secondary));
                     });
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
@@ -1042,7 +1134,7 @@ impl OptimizerApp {
                                 self.sync_config();
                             }
                         });
-                        ui.label(RichText::new("💡 Pin: 60-80% để triệt tiêu Turbo 25W; Sạc: 100% để max xung 3.9GHz.").size(10.5).color(p.text_secondary));
+                        ui.label(RichText::new(format!("💡 Pin: Giới hạn trần để tiết kiệm điện; Sạc: 100% mở tối đa xung nhịp {} nhân.", self.autonomous.hardware_profile.cpu_logical_cores)).size(10.5).color(p.text_secondary));
                     });
                     ui.end_row();
 

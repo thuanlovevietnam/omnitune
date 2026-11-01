@@ -12,6 +12,7 @@ mod scenarios;
 mod startup;
 mod theme;
 mod types;
+mod hardware_profile;
 mod licensing;
 mod reg;
 mod config;

@@ -1,3 +1,4 @@
+use crate::autonomous_engine::OperatingMode;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use windows_sys::Win32::System::Registry::{
@@ -21,6 +22,8 @@ pub struct AppConfig {
     pub battery_threshold_80: bool,
     pub minimize_to_tray: bool,
     pub run_on_startup: bool,
+    #[serde(default)]
+    pub operating_mode: OperatingMode,
 }
 
 impl Default for AppConfig {
@@ -36,6 +39,7 @@ impl Default for AppConfig {
             battery_threshold_80: false,
             minimize_to_tray: false,
             run_on_startup: false,
+            operating_mode: OperatingMode::WorkloadAdaptive,
         }
     }
 }
