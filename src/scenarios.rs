@@ -259,8 +259,6 @@ pub fn apply_scenario(
                 .creation_flags(CREATE_NO_WINDOW)
                 .status();
 
-            let _ = crate::power::set_brightness(50);
-
             format!(
                 "Đã bật kịch bản Remote Desktop: Chống Sleep/Lock, tối ưu mạng TCP, ưu tiên {} app remote, hạ {} app sync để giữ đường truyền ổn định.",
                 boosted, deprioritized
@@ -275,7 +273,6 @@ pub fn apply_scenario(
 
             let _ = crate::power::set_cpu_max_state_dc(60);
             let _ = crate::power::set_cpu_max_state_ac(65);
-            let _ = crate::power::set_brightness(70);
 
             let deprioritized = prioritize_apps(
                 sys,
@@ -305,7 +302,6 @@ pub fn apply_scenario(
 
             let _ = crate::power::set_cpu_max_state_dc(final_dc);
             let _ = crate::power::set_cooling_policy(false); // Passive cooling
-            let _ = crate::power::set_brightness(45);
 
             let deprioritized = prioritize_apps(
                 sys,
@@ -316,7 +312,7 @@ pub fn apply_scenario(
             let (freed, _) = crate::memory::trim_working_sets(sys);
 
             format!(
-                "Đã bật kịch bản Di động / Pin: Điều tiết CPU {} nhân ở mức {}%, quạt tắt (Passive), độ sáng 45%, thu hồi {} RAM, đóng băng {} app ngầm.",
+                "Đã bật kịch bản Di động / Pin: Điều tiết CPU {} nhân ở mức {}%, quạt tắt (Passive), thu hồi {} RAM, đóng băng {} app ngầm.",
                 hw.cpu_logical_cores,
                 final_dc,
                 crate::cleaner::format_bytes(freed),

@@ -144,9 +144,25 @@ pub fn set_brightness(level: u32) -> bool {
         .unwrap_or(false)
 }
 
-#[allow(dead_code)]
 pub fn get_brightness() -> u32 {
-    80
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            "(Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightness -ErrorAction SilentlyContinue).CurrentBrightness",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if let Ok(val) = text.parse::<u32>() {
+            return val.clamp(10, 100);
+        }
+    }
+    100
 }
 
 pub fn get_cpu_max_state_dc() -> u32 {

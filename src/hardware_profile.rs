@@ -203,7 +203,7 @@ impl HardwareProfile {
                 * (0.65 + 0.35 * (battery_pct as f32 / 100.0)))
                 .round() as u32;
             let final_dc = dc_dynamic.clamp(50, self.optimal_cpu_dc_limit);
-            let _ = crate::power::set_power_scheme("SCHEME_MAX"); // Power saver
+            let _ = crate::power::set_power_scheme("SCHEME_BALANCED"); // Giữ Balanced để không giảm độ sáng màn hình
             let _ = crate::power::set_cpu_max_state_dc(final_dc);
             let active_cool = battery_pct > 50;
             let _ = crate::power::set_cooling_policy(active_cool);

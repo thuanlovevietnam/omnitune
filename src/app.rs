@@ -584,9 +584,6 @@ impl OptimizerApp {
         if config.battery_threshold_80 {
             let _ = set_battery_threshold(true, 80);
         }
-        if config.brightness_level > 0 {
-            let _ = set_brightness(config.brightness_level);
-        }
         if config.sysmain_disabled {
             crate::power::set_sysmain_service(false);
         }
@@ -795,7 +792,7 @@ impl OptimizerApp {
             keep_awake_mode: config.keep_awake_mode,
             cooling_active: config.cooling_active,
             gamedvr_enabled: config.gamedvr_enabled,
-            brightness_level: config.brightness_level,
+            brightness_level: crate::power::get_brightness(),
             ram_trim_threshold_pct: config.ram_trim_threshold_pct,
             sysmain_disabled: config.sysmain_disabled,
             disable_ntfs_last_access: config.disable_ntfs_last_access,
@@ -902,14 +899,11 @@ impl OptimizerApp {
         let _ = crate::power::set_ssd_trim(self.trim_enabled);
         let _ = crate::power::set_wait_to_kill_service(self.wait_to_kill_service);
 
-        // Nhóm 4: Đồ họa, Màn hình & Độ trễ (5)
+        // Nhóm 4: Đồ họa, Màn hình & Độ trễ (4)
         set_timer_resolution_1ms(self.timer_1ms_enabled);
         let _ = set_gamedvr(self.gamedvr_enabled);
         let _ = crate::power::set_menu_show_delay(self.menu_show_delay_zero);
         let _ = crate::power::set_startup_delay(self.startup_delay_zero);
-        if self.brightness_level > 0 {
-            let _ = set_brightness(self.brightness_level);
-        }
 
         // Nhóm 5: Mạng & Kết nối TCP/IP (4)
         let _ = crate::power::set_tcp_optimization(self.tcp_autotuning);
