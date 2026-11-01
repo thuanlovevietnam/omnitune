@@ -635,21 +635,39 @@ impl OptimizerApp {
                     .color(p.accent_blue),
             );
 
-            // Auto-Pilot live badge (High contrast)
-            let (ap_text, ap_color, ap_bg) = if !self.initial_scan_done {
+            // Mode Badge (High contrast)
+            let (mode_badge_text, mode_badge_color, mode_badge_bg) = if !self.initial_scan_done {
                 ("⟳ Đang khởi động...", p.accent_blue, if p.is_dark { Color32::from_rgb(26, 36, 60) } else { Color32::from_rgb(226, 234, 246) })
-            } else if self.autonomous.auto_pilot_enabled {
-                ("● Auto-Pilot Tự Hành", p.success_green, if p.is_dark { Color32::from_rgb(18, 48, 28) } else { Color32::from_rgb(220, 252, 231) })
             } else {
-                ("○ Chế độ Thủ công", p.warn_amber, if p.is_dark { Color32::from_rgb(52, 38, 18) } else { Color32::from_rgb(254, 243, 199) })
+                match self.autonomous.operating_mode {
+                    OperatingMode::HardwareOptimal => (
+                        "⚙ 1. Phần Cứng & OS",
+                        p.accent_blue,
+                        if p.is_dark { Color32::from_rgb(26, 36, 60) } else { Color32::from_rgb(226, 234, 246) },
+                    ),
+                    OperatingMode::WorkloadAdaptive => (
+                        "⚡ 2. Tự Động Công Việc",
+                        p.success_green,
+                        if p.is_dark { Color32::from_rgb(18, 48, 28) } else { Color32::from_rgb(220, 252, 231) },
+                    ),
+                }
             };
 
-            let ap_badge = egui::Button::new(RichText::new(ap_text).size(11.5).strong().color(ap_color))
-                .fill(ap_bg)
+            let mode_badge = egui::Button::new(RichText::new(mode_badge_text).size(11.5).strong().color(mode_badge_color))
+                .fill(mode_badge_bg)
                 .corner_radius(CornerRadius::same(5));
-            if ui.add(ap_badge).on_hover_text("Bấm để Bật/Tắt chế độ Auto-Pilot tự hành (lưu tự động)").clicked() {
+            if ui.add(mode_badge).on_hover_text("Bấm để đổi giữa Chế độ 1 (Phần cứng) và Chế độ 2 (Công việc)").clicked() {
                 if self.initial_scan_done {
-                    self.autonomous.auto_pilot_enabled = !self.autonomous.auto_pilot_enabled;
+                    let next = match self.autonomous.operating_mode {
+                        OperatingMode::HardwareOptimal => OperatingMode::WorkloadAdaptive,
+                        OperatingMode::WorkloadAdaptive => OperatingMode::HardwareOptimal,
+                    };
+                    self.autonomous.set_operating_mode(
+                        next,
+                        &mut self.sys,
+                        self.power_status.is_ac_online,
+                        self.power_status.battery_percent,
+                    );
                     self.sync_config();
                 }
             }
@@ -767,49 +785,73 @@ impl OptimizerApp {
             ui.add_space(6.0);
         }
 
-        // --- 2 CHẾ ĐỘ TỐI ƯU HÓA HỆ THỐNG (HARDWARE OPTIMAL VS WORKLOAD ADAPTIVE) ---
-        ui.horizontal(|ui| {
+        // --- 2 CHẾ ĐỘ TỐI ƯU HÓA HỆ THỐNG (PROMINENT FULL-WIDTH SELECTOR) ---
+        ui.columns(2, |cols| {
+            // Cột 1: Chế độ 1 - Tối ưu Phần cứng & OS
             let is_hw = self.autonomous.operating_mode == OperatingMode::HardwareOptimal;
-            let hw_btn = egui::Button::new(
-                RichText::new(if is_hw { "● 1. TỐI ƯU PHẦN CỨNG & OS" } else { "○ 1. Tối ưu Phần Cứng & OS" })
-                    .size(11.5)
-                    .strong()
-                    .color(if is_hw { Color32::WHITE } else { p.text_secondary }),
-            )
-            .fill(if is_hw { p.primary_btn } else { p.card_bg })
-            .stroke(Stroke::new(1.0, if is_hw { p.primary_btn } else { p.card_border }))
-            .corner_radius(CornerRadius::same(6));
+            p.modern_card(&mut cols[0], |ui| {
+                let (btn_fill, text_color, desc_color) = if is_hw {
+                    (p.primary_btn, Color32::WHITE, Color32::from_rgb(220, 235, 255))
+                } else {
+                    (p.card_bg, p.text_primary, p.text_secondary)
+                };
 
-            if ui.add(hw_btn).on_hover_text("Chế độ 1: Tối ưu chuẩn xác dựa trên OS, CPU, RAM, SSD/HDD, GPU thực tế của máy (Không hardcode)").clicked() {
-                self.autonomous.set_operating_mode(
-                    OperatingMode::HardwareOptimal,
-                    &mut self.sys,
-                    self.power_status.is_ac_online,
-                    self.power_status.battery_percent,
-                );
-                self.sync_config();
-            }
+                let btn = egui::Button::new(
+                    RichText::new(if is_hw { "● 1. TỐI ƯU PHẦN CỨNG" } else { "○ 1. Tối Ưu Phần Cứng" })
+                        .size(11.5)
+                        .strong()
+                        .color(text_color),
+                )
+                .fill(btn_fill)
+                .min_size(Vec2::new(ui.available_width(), 32.0))
+                .corner_radius(CornerRadius::same(5));
 
+                if ui.add(btn).on_hover_text("Tối ưu chuẩn xác theo OS, CPU, RAM, SSD/HDD, GPU thực tế của máy (Không hardcode)").clicked() {
+                    self.autonomous.set_operating_mode(
+                        OperatingMode::HardwareOptimal,
+                        &mut self.sys,
+                        self.power_status.is_ac_online,
+                        self.power_status.battery_percent,
+                    );
+                    self.sync_config();
+                }
+
+                ui.add_space(2.0);
+                ui.label(RichText::new("Chuẩn theo cấu hình máy").size(10.0).color(desc_color));
+            });
+
+            // Cột 2: Chế độ 2 - Tự động theo Công việc
             let is_wl = self.autonomous.operating_mode == OperatingMode::WorkloadAdaptive;
-            let wl_btn = egui::Button::new(
-                RichText::new(if is_wl { "● 2. TỰ ĐỘNG THEO CÔNG VIỆC" } else { "○ 2. Tự Động Theo Công Việc" })
-                    .size(11.5)
-                    .strong()
-                    .color(if is_wl { Color32::WHITE } else { p.text_secondary }),
-            )
-            .fill(if is_wl { p.accent_blue } else { p.card_bg })
-            .stroke(Stroke::new(1.0, if is_wl { p.accent_blue } else { p.card_border }))
-            .corner_radius(CornerRadius::same(6));
+            p.modern_card(&mut cols[1], |ui| {
+                let (btn_fill2, text_color2, desc_color2) = if is_wl {
+                    (p.accent_blue, Color32::WHITE, Color32::from_rgb(220, 235, 255))
+                } else {
+                    (p.card_bg, p.text_primary, p.text_secondary)
+                };
 
-            if ui.add(wl_btn).on_hover_text("Chế độ 2: Tự động điều tiết theo tác vụ đang làm (Dev, Game, Họp, Xem phim, Di động, Nghỉ ngơi)").clicked() {
-                self.autonomous.set_operating_mode(
-                    OperatingMode::WorkloadAdaptive,
-                    &mut self.sys,
-                    self.power_status.is_ac_online,
-                    self.power_status.battery_percent,
-                );
-                self.sync_config();
-            }
+                let btn2 = egui::Button::new(
+                    RichText::new(if is_wl { "● 2. TỰ ĐỘNG CÔNG VIỆC" } else { "○ 2. Tự Động Công Việc" })
+                        .size(11.5)
+                        .strong()
+                        .color(text_color2),
+                )
+                .fill(btn_fill2)
+                .min_size(Vec2::new(ui.available_width(), 32.0))
+                .corner_radius(CornerRadius::same(5));
+
+                if ui.add(btn2).on_hover_text("Tự động nhận diện Dev, Game, Họp, Xem phim, Di động, Nghỉ ngơi").clicked() {
+                    self.autonomous.set_operating_mode(
+                        OperatingMode::WorkloadAdaptive,
+                        &mut self.sys,
+                        self.power_status.is_ac_online,
+                        self.power_status.battery_percent,
+                    );
+                    self.sync_config();
+                }
+
+                ui.add_space(2.0);
+                ui.label(RichText::new("Thích ứng theo tác vụ thực tế").size(10.0).color(desc_color2));
+            });
         });
         ui.add_space(6.0);
 
@@ -1164,6 +1206,55 @@ impl OptimizerApp {
                 .color(p.text_secondary),
         );
         ui.add_space(6.0);
+
+        // --- CHỌN CHẾ ĐỘ TỐI ƯU HỆ THỐNG ---
+        ui.label(RichText::new("CHẾ ĐỘ TỐI ƯU HỆ THỐNG HIỆN TẠI").size(12.5).strong().color(p.accent_blue));
+        ui.add_space(2.0);
+        p.modern_card(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                let is_hw = self.autonomous.operating_mode == OperatingMode::HardwareOptimal;
+                let hw_btn = egui::Button::new(
+                    RichText::new(if is_hw { "● 1. Tối ưu Phần Cứng & OS (Theo máy thực tế)" } else { "○ 1. Tối ưu Phần Cứng & OS" })
+                        .size(11.5)
+                        .strong()
+                        .color(if is_hw { Color32::WHITE } else { p.text_primary }),
+                )
+                .fill(if is_hw { p.primary_btn } else { p.tab_inactive_bg })
+                .corner_radius(CornerRadius::same(5));
+
+                if ui.add(hw_btn).clicked() {
+                    self.autonomous.set_operating_mode(
+                        OperatingMode::HardwareOptimal,
+                        &mut self.sys,
+                        self.power_status.is_ac_online,
+                        self.power_status.battery_percent,
+                    );
+                    self.sync_config();
+                }
+
+                let is_wl = self.autonomous.operating_mode == OperatingMode::WorkloadAdaptive;
+                let wl_btn = egui::Button::new(
+                    RichText::new(if is_wl { "● 2. Tự Động Theo Công Việc (Auto-Pilot)" } else { "○ 2. Tự Động Theo Công Việc" })
+                        .size(11.5)
+                        .strong()
+                        .color(if is_wl { Color32::WHITE } else { p.text_primary }),
+                )
+                .fill(if is_wl { p.accent_blue } else { p.tab_inactive_bg })
+                .corner_radius(CornerRadius::same(5));
+
+                if ui.add(wl_btn).clicked() {
+                    self.autonomous.set_operating_mode(
+                        OperatingMode::WorkloadAdaptive,
+                        &mut self.sys,
+                        self.power_status.is_ac_online,
+                        self.power_status.battery_percent,
+                    );
+                    self.sync_config();
+                }
+            });
+        });
+
+        ui.add_space(8.0);
 
         // --- PHẦN 1: BẢNG MA TRẬN SETUP (EGUI GRID CHUẨN XÁC) ---
         ui.label(RichText::new("1. MA TRẬN 10 TIÊU CHÍ SETUP PHẦN CỨNG").size(12.5).strong().color(p.accent_blue));
