@@ -239,15 +239,16 @@ macro_rules! render_settings_row {
     };
 }
 
-fn render_two_col_chip<R>(
+fn matrix_box<R>(
     ui: &mut egui::Ui,
     palette: &ThemePalette,
     title: &str,
     desc: &str,
-    render_controls: impl FnOnce(&mut egui::Ui) -> R,
+    button: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
     render_chip_frame(ui, palette.is_dark, palette.card_border, |ui| {
         ui.columns(2, |cols| {
+            // Cột 1: info (Tiêu đề + Mô tả)
             cols[0].vertical(|ui| {
                 ui.label(
                     RichText::new(title)
@@ -263,10 +264,9 @@ fn render_two_col_chip<R>(
                 );
             });
 
-            cols[1].with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                render_controls(ui)
-            })
-            .inner
+            // Cột 2: button (Nút bấm, Switch, Slider, Thao tác)
+            cols[1].with_layout(egui::Layout::top_down(egui::Align::Max), button)
+                .inner
         })
     })
 }
@@ -279,7 +279,7 @@ fn render_switch_chip(
     value: &mut bool,
     custom_labels: Option<(&str, &str)>,
 ) -> bool {
-    render_two_col_chip(ui, palette, title, desc, |ui| {
+    matrix_box(ui, palette, title, desc, |ui| {
         ui.add_space(4.0);
         if let Some((on, off)) = custom_labels {
             render_switch_custom(ui, value, on, off)
@@ -299,7 +299,7 @@ fn render_slider_chip<T: egui::emath::Numeric>(
     suffix: &str,
     preset: Option<(&str, T)>,
 ) -> bool {
-    render_two_col_chip(ui, palette, title, desc, |ui| {
+    matrix_box(ui, palette, title, desc, |ui| {
         let mut changed = false;
         if let Some((preset_label, preset_val)) = preset {
             if ui
@@ -335,7 +335,7 @@ fn render_action_chip(
     action_label: &str,
     mut on_action: impl FnMut(),
 ) {
-    render_two_col_chip(ui, palette, title, desc, |ui| {
+    matrix_box(ui, palette, title, desc, |ui| {
         ui.add_space(4.0);
         if ui
             .button(
@@ -357,7 +357,7 @@ fn render_info_chip(
     desc: &str,
     badge: Option<(&str, Color32)>,
 ) {
-    render_two_col_chip(ui, palette, title, desc, |ui| {
+    matrix_box(ui, palette, title, desc, |ui| {
         ui.add_space(6.0);
         if let Some((badge_text, badge_color)) = badge {
             ui.label(
@@ -2537,7 +2537,7 @@ impl OptimizerApp {
         render_settings_row!(
             ui,
             |ui| {
-                render_two_col_chip(
+                matrix_box(
                     ui,
                     &p,
                     "1. 🧹 Tự động dọn RAM khi đầy",
