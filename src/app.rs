@@ -211,11 +211,15 @@ fn render_chip_frame<R>(
         Color32::from_rgb(248, 250, 252)
     };
     egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(12, 10))
+        .inner_margin(egui::Margin::symmetric(10, 8))
         .corner_radius(CornerRadius::same(spacing::CHIP_RADIUS))
         .fill(bg)
         .stroke(Stroke::new(1.0, border_color))
-        .show(ui, add_contents)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.set_min_height(62.0);
+            add_contents(ui)
+        })
         .inner
 }
 
@@ -280,7 +284,7 @@ fn render_switch_chip(
     custom_labels: Option<(&str, &str)>,
 ) -> bool {
     matrix_box(ui, palette, title, desc, |ui| {
-        ui.add_space(4.0);
+        ui.add_space(16.0);
         if let Some((on, off)) = custom_labels {
             render_switch_custom(ui, value, on, off)
         } else {
@@ -302,6 +306,7 @@ fn render_slider_chip<T: egui::emath::Numeric>(
     matrix_box(ui, palette, title, desc, |ui| {
         let mut changed = false;
         if let Some((preset_label, preset_val)) = preset {
+            ui.add_space(8.0);
             if ui
                 .button(
                     RichText::new(preset_label)
@@ -315,7 +320,7 @@ fn render_slider_chip<T: egui::emath::Numeric>(
             }
             ui.add_space(2.0);
         } else {
-            ui.add_space(8.0);
+            ui.add_space(18.0);
         }
         if ui
             .add(egui::Slider::new(value, range).suffix(suffix))
@@ -336,7 +341,7 @@ fn render_action_chip(
     mut on_action: impl FnMut(),
 ) {
     matrix_box(ui, palette, title, desc, |ui| {
-        ui.add_space(4.0);
+        ui.add_space(16.0);
         if ui
             .button(
                 RichText::new(action_label)
@@ -358,7 +363,7 @@ fn render_info_chip(
     badge: Option<(&str, Color32)>,
 ) {
     matrix_box(ui, palette, title, desc, |ui| {
-        ui.add_space(6.0);
+        ui.add_space(18.0);
         if let Some((badge_text, badge_color)) = badge {
             ui.label(
                 RichText::new(badge_text)
@@ -2543,6 +2548,7 @@ impl OptimizerApp {
                     "1. 🧹 Tự động dọn RAM khi đầy",
                     "Thu hồi Working Set bộ nhớ đệm thừa",
                     |ui| {
+                        ui.add_space(5.0);
                         if render_switch(ui, &mut self.autonomous.auto_ram_enabled) {
                             self.sync_config();
                         }
