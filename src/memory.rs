@@ -56,10 +56,31 @@ pub fn get_top_processes(sys: &mut System, limit: usize) -> Vec<ProcessMemInfo> 
             pid: pid.as_u32(),
             name: proc.name().to_string_lossy().to_string(),
             memory_bytes: proc.memory(),
+            cpu_usage: proc.cpu_usage(),
         })
         .collect();
 
     list.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
+    list.truncate(limit);
+    list
+}
+
+#[allow(dead_code)]
+pub fn get_top_cpu_processes(sys: &mut System, limit: usize) -> Vec<ProcessMemInfo> {
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+    let mut list: Vec<ProcessMemInfo> = sys
+        .processes()
+        .iter()
+        .map(|(pid, proc)| ProcessMemInfo {
+            pid: pid.as_u32(),
+            name: proc.name().to_string_lossy().to_string(),
+            memory_bytes: proc.memory(),
+            cpu_usage: proc.cpu_usage(),
+        })
+        .collect();
+
+    list.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal));
     list.truncate(limit);
     list
 }

@@ -28,6 +28,7 @@ pub struct ProcessMemInfo {
     pub pid: u32,
     pub name: String,
     pub memory_bytes: u64,
+    pub cpu_usage: f32,
 }
 
 #[derive(Debug, Clone, Default)]
