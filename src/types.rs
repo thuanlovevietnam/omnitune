@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tab {
     Widget,
+    #[allow(dead_code)]
     AdvancedSettings,
 }
 

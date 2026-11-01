@@ -147,6 +147,7 @@ impl AutonomousEngine {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_manual_scenario(
         &mut self,
         scenario: Scenario,
