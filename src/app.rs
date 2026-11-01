@@ -795,6 +795,80 @@ impl OptimizerApp {
         self.quick_opt_msg = format!("✓ {}", msg);
         self.autonomous.log("[TỐI ƯU]", format!("Tối ưu tức thì: {}", msg));
     }
+
+    fn clean_cpu_partition(&mut self) {
+        let (boosted, eco_count) = apply_foreground_boost_and_eco(
+            &self.sys,
+            self.foreground_info.as_ref().map(|(pid, _)| *pid),
+        );
+        let msg = format!(
+            "Dọn dẹp CPU: Ưu tiên tiến trình đang dùng ({}), đưa {} ứng dụng nền vào chế độ EcoQoS.",
+            if boosted > 0 { "Tăng tốc hoàn tất" } else { "Đã duy trì" },
+            eco_count
+        );
+        self.quick_opt_msg = format!("✓ {}", msg);
+        self.autonomous.log("[CPU]", msg);
+    }
+
+    fn clean_ram_partition(&mut self) {
+        let (freed_ram, count) = trim_working_sets(&mut self.sys);
+        self.mem_stats = get_memory_stats();
+        self.top_processes = get_top_processes(&mut self.sys, 25);
+        let msg = format!(
+            "Dọn dẹp RAM: Thu hồi {} bộ nhớ đệm thừa từ {} tiến trình.",
+            format_bytes(freed_ram),
+            count
+        );
+        self.quick_opt_msg = format!("✓ {}", msg);
+        self.autonomous.log("[RAM]", msg);
+    }
+
+    fn clean_pin_partition(&mut self) {
+        let _ = self.autonomous.hardware_profile.apply_hardware_optimal(
+            self.power_status.is_ac_online,
+            self.power_status.battery_percent,
+        );
+        let (_, eco_count) = apply_foreground_boost_and_eco(
+            &self.sys,
+            self.foreground_info.as_ref().map(|(pid, _)| *pid),
+        );
+        let (freed_ram, _) = trim_working_sets(&mut self.sys);
+        self.power_status = crate::power::get_power_status();
+        let msg = format!(
+            "Dọn dẹp PIN: Kích hoạt tiết kiệm điện, đưa {} app vào EcoQoS, thu hồi {} RAM.",
+            eco_count,
+            format_bytes(freed_ram)
+        );
+        self.quick_opt_msg = format!("✓ {}", msg);
+        self.autonomous.log("[PIN]", msg);
+    }
+
+    fn clean_drive_partition(&mut self) {
+        let targets = get_default_targets();
+        let mut freed_junk = 0u64;
+        let mut deleted_files = 0usize;
+        for target in &targets {
+            if target.tier == CleanTier::Safe {
+                let (f_bytes, f_count) = clean_target(target);
+                freed_junk += f_bytes;
+                deleted_files += f_count;
+            }
+        }
+        for (i, target) in targets.iter().enumerate() {
+            let (size, count) = scan_target(target);
+            if let Some(cat) = self.clean_categories.get_mut(i) {
+                cat.size_bytes = size;
+                cat.file_count = count;
+            }
+        }
+        let msg = format!(
+            "Dọn dẹp Ổ đĩa: Xóa {} tệp rác an toàn ({}), thu hồi không gian lưu trữ.",
+            deleted_files,
+            format_bytes(freed_junk)
+        );
+        self.quick_opt_msg = format!("✓ {}", msg);
+        self.autonomous.log("[DRIVE]", msg);
+    }
 }
 
 impl eframe::App for OptimizerApp {
@@ -1088,15 +1162,26 @@ impl OptimizerApp {
                     ui.label(RichText::new(format!("• Giới hạn Turbo: AC {}% | DC {}% (Sàn {}%)", self.cpu_limit_ac, self.cpu_limit_dc, self.cpu_min_state_pct)).size(9.8).color(p.text_secondary));
 
                     ui.add_space(6.0);
-                    let btn_txt = if is_cpu { "▲ Thu gọn" } else { "⚙ Cài đặt (17 thông số) ▾" };
-                    let btn_fill = if is_cpu { p.primary_btn } else { p.tab_inactive_bg };
-                    let btn = egui::Button::new(RichText::new(btn_txt).size(10.5).strong().color(if is_cpu { Color32::WHITE } else { p.text_primary }))
-                        .fill(btn_fill)
-                        .min_size(Vec2::new(ui.available_width(), 26.0))
-                        .corner_radius(CornerRadius::same(5));
-                    if ui.add(btn).clicked() {
-                        self.selected_partition = if is_cpu { None } else { Some(PartitionTab::Cpu) };
-                    }
+                    ui.horizontal(|ui| {
+                        let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                        let clean_btn = egui::Button::new(RichText::new("🧹 Dọn dẹp").size(10.5).strong().color(Color32::WHITE))
+                            .fill(p.success_green)
+                            .min_size(Vec2::new(w, 26.0))
+                            .corner_radius(CornerRadius::same(5));
+                        if ui.add(clean_btn).on_hover_text("Dọn dẹp CPU: Tối ưu ưu tiên tiến trình, ép EcoQoS các app chạy ngầm").clicked() {
+                            self.clean_cpu_partition();
+                        }
+
+                        let btn_txt = if is_cpu { "▲ Thu gọn" } else { "⚙ Cài đặt (17) ▾" };
+                        let btn_fill = if is_cpu { p.primary_btn } else { p.tab_inactive_bg };
+                        let btn = egui::Button::new(RichText::new(btn_txt).size(10.5).strong().color(if is_cpu { Color32::WHITE } else { p.text_primary }))
+                            .fill(btn_fill)
+                            .min_size(Vec2::new(w, 26.0))
+                            .corner_radius(CornerRadius::same(5));
+                        if ui.add(btn).clicked() {
+                            self.selected_partition = if is_cpu { None } else { Some(PartitionTab::Cpu) };
+                        }
+                    });
                 });
 
             // Card 2: RAM
@@ -1144,15 +1229,26 @@ impl OptimizerApp {
                     ui.label(RichText::new(format!("• Auto Trim: Ngưỡng {}% • Nén RAM: {}", self.ram_trim_threshold_pct, if self.memory_compression { "Bật" } else { "Tắt" })).size(9.8).color(p.text_secondary));
 
                     ui.add_space(6.0);
-                    let btn_txt = if is_ram { "▲ Thu gọn" } else { "⚙ Cài đặt (4 thông số) ▾" };
-                    let btn_fill = if is_ram { p.primary_btn } else { p.tab_inactive_bg };
-                    let btn = egui::Button::new(RichText::new(btn_txt).size(10.5).strong().color(if is_ram { Color32::WHITE } else { p.text_primary }))
-                        .fill(btn_fill)
-                        .min_size(Vec2::new(ui.available_width(), 26.0))
-                        .corner_radius(CornerRadius::same(5));
-                    if ui.add(btn).clicked() {
-                        self.selected_partition = if is_ram { None } else { Some(PartitionTab::Ram) };
-                    }
+                    ui.horizontal(|ui| {
+                        let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                        let clean_btn = egui::Button::new(RichText::new("🧹 Dọn dẹp").size(10.5).strong().color(Color32::WHITE))
+                            .fill(p.success_green)
+                            .min_size(Vec2::new(w, 26.0))
+                            .corner_radius(CornerRadius::same(5));
+                        if ui.add(clean_btn).on_hover_text("Dọn dẹp RAM: Thu hồi Working Set, giải phóng bộ nhớ đệm thừa").clicked() {
+                            self.clean_ram_partition();
+                        }
+
+                        let btn_txt = if is_ram { "▲ Thu gọn" } else { "⚙ Cài đặt (4) ▾" };
+                        let btn_fill = if is_ram { p.primary_btn } else { p.tab_inactive_bg };
+                        let btn = egui::Button::new(RichText::new(btn_txt).size(10.5).strong().color(if is_ram { Color32::WHITE } else { p.text_primary }))
+                            .fill(btn_fill)
+                            .min_size(Vec2::new(w, 26.0))
+                            .corner_radius(CornerRadius::same(5));
+                        if ui.add(btn).clicked() {
+                            self.selected_partition = if is_ram { None } else { Some(PartitionTab::Ram) };
+                        }
+                    });
                 });
         });
 
@@ -1254,15 +1350,26 @@ impl OptimizerApp {
                     }
 
                     ui.add_space(6.0);
-                    let btn_txt = if is_pin { "▲ Thu gọn" } else { "⚙ Cài đặt (6 thông số) ▾" };
-                    let btn_fill = if is_pin { p.primary_btn } else { p.tab_inactive_bg };
-                    let btn = egui::Button::new(RichText::new(btn_txt).size(10.5).strong().color(if is_pin { Color32::WHITE } else { p.text_primary }))
-                        .fill(btn_fill)
-                        .min_size(Vec2::new(ui.available_width(), 26.0))
-                        .corner_radius(CornerRadius::same(5));
-                    if ui.add(btn).clicked() {
-                        self.selected_partition = if is_pin { None } else { Some(PartitionTab::Pin) };
-                    }
+                    ui.horizontal(|ui| {
+                        let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                        let clean_btn = egui::Button::new(RichText::new("🧹 Dọn dẹp").size(10.5).strong().color(Color32::WHITE))
+                            .fill(p.success_green)
+                            .min_size(Vec2::new(w, 26.0))
+                            .corner_radius(CornerRadius::same(5));
+                        if ui.add(clean_btn).on_hover_text("Dọn dẹp PIN: Kích hoạt tiết kiệm điện, ép EcoQoS giảm tiêu thụ pin").clicked() {
+                            self.clean_pin_partition();
+                        }
+
+                        let btn_txt = if is_pin { "▲ Thu gọn" } else { "⚙ Cài đặt (6) ▾" };
+                        let btn_fill = if is_pin { p.primary_btn } else { p.tab_inactive_bg };
+                        let btn = egui::Button::new(RichText::new(btn_txt).size(10.5).strong().color(if is_pin { Color32::WHITE } else { p.text_primary }))
+                            .fill(btn_fill)
+                            .min_size(Vec2::new(w, 26.0))
+                            .corner_radius(CornerRadius::same(5));
+                        if ui.add(btn).clicked() {
+                            self.selected_partition = if is_pin { None } else { Some(PartitionTab::Pin) };
+                        }
+                    });
                 });
 
             // Card 4: DRIVE
@@ -1313,15 +1420,26 @@ impl OptimizerApp {
                     ui.label(RichText::new(format!("• Rác hệ thống: {} (Quét 3 tầng)", format_bytes(total_junk))).size(9.8).color(p.text_secondary));
 
                     ui.add_space(6.0);
-                    let btn_txt = if is_drv { "▲ Thu gọn" } else { "⚙ Cài đặt (6 thông số) ▾" };
-                    let btn_fill = if is_drv { p.primary_btn } else { p.tab_inactive_bg };
-                    let btn = egui::Button::new(RichText::new(btn_txt).size(10.5).strong().color(if is_drv { Color32::WHITE } else { p.text_primary }))
-                        .fill(btn_fill)
-                        .min_size(Vec2::new(ui.available_width(), 26.0))
-                        .corner_radius(CornerRadius::same(5));
-                    if ui.add(btn).clicked() {
-                        self.selected_partition = if is_drv { None } else { Some(PartitionTab::Drive) };
-                    }
+                    ui.horizontal(|ui| {
+                        let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                        let clean_btn = egui::Button::new(RichText::new("🧹 Dọn dẹp").size(10.5).strong().color(Color32::WHITE))
+                            .fill(p.success_green)
+                            .min_size(Vec2::new(w, 26.0))
+                            .corner_radius(CornerRadius::same(5));
+                        if ui.add(clean_btn).on_hover_text("Dọn dẹp Ổ đĩa: Quét và xóa tệp rác Tầng 1 an toàn").clicked() {
+                            self.clean_drive_partition();
+                        }
+
+                        let btn_txt = if is_drv { "▲ Thu gọn" } else { "⚙ Cài đặt (6) ▾" };
+                        let btn_fill = if is_drv { p.primary_btn } else { p.tab_inactive_bg };
+                        let btn = egui::Button::new(RichText::new(btn_txt).size(10.5).strong().color(if is_drv { Color32::WHITE } else { p.text_primary }))
+                            .fill(btn_fill)
+                            .min_size(Vec2::new(w, 26.0))
+                            .corner_radius(CornerRadius::same(5));
+                        if ui.add(btn).clicked() {
+                            self.selected_partition = if is_drv { None } else { Some(PartitionTab::Drive) };
+                        }
+                    });
                 });
         });
 
