@@ -239,6 +239,53 @@ macro_rules! render_settings_row {
     };
 }
 
+fn render_two_col_chip<R>(
+    ui: &mut egui::Ui,
+    palette: &ThemePalette,
+    title: &str,
+    desc: &str,
+    render_controls: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    render_chip_frame(ui, palette.is_dark, palette.card_border, |ui| {
+        let total_w = ui.available_width();
+        let left_w = (total_w * 0.60).clamp(180.0, 240.0);
+        let right_w = (total_w - left_w - 6.0).max(80.0);
+
+        ui.horizontal(|ui| {
+            // CỘT 1 (60%): Thông tin & mô tả
+            ui.allocate_ui_with_layout(
+                Vec2::new(left_w, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.label(
+                        RichText::new(title)
+                            .size(typography::CHIP_TITLE)
+                            .strong()
+                            .color(palette.text_primary),
+                    );
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new(desc)
+                            .size(typography::CHIP_DESC)
+                            .color(palette.text_secondary),
+                    );
+                },
+            );
+
+            ui.add_space(6.0);
+
+            // CỘT 2 (40%): Điều khiển & Tác vụ
+            ui.allocate_ui_with_layout(
+                Vec2::new(right_w, 0.0),
+                egui::Layout::top_down(egui::Align::Max),
+                render_controls,
+            )
+            .inner
+        })
+        .inner
+    })
+}
+
 fn render_switch_chip(
     ui: &mut egui::Ui,
     palette: &ThemePalette,
@@ -247,32 +294,13 @@ fn render_switch_chip(
     value: &mut bool,
     custom_labels: Option<(&str, &str)>,
 ) -> bool {
-    render_chip_frame(ui, palette.is_dark, palette.card_border, |ui| {
-        let changed = ui
-            .horizontal(|ui| {
-                ui.label(
-                    RichText::new(title)
-                        .size(typography::CHIP_TITLE)
-                        .strong()
-                        .color(palette.text_primary),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some((on, off)) = custom_labels {
-                        render_switch_custom(ui, value, on, off)
-                    } else {
-                        render_switch(ui, value)
-                    }
-                })
-                .inner
-            })
-            .inner;
-        ui.add_space(2.0);
-        ui.label(
-            RichText::new(desc)
-                .size(typography::CHIP_DESC)
-                .color(palette.text_secondary),
-        );
-        changed
+    render_two_col_chip(ui, palette, title, desc, |ui| {
+        ui.add_space(4.0);
+        if let Some((on, off)) = custom_labels {
+            render_switch_custom(ui, value, on, off)
+        } else {
+            render_switch(ui, value)
+        }
     })
 }
 
@@ -286,43 +314,30 @@ fn render_slider_chip<T: egui::emath::Numeric>(
     suffix: &str,
     preset: Option<(&str, T)>,
 ) -> bool {
-    render_chip_frame(ui, palette.is_dark, palette.card_border, |ui| {
+    render_two_col_chip(ui, palette, title, desc, |ui| {
         let mut changed = false;
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(title)
-                    .size(typography::CHIP_TITLE)
-                    .strong()
-                    .color(palette.text_primary),
-            );
-            if let Some((preset_label, preset_val)) = preset {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button(
-                            RichText::new(preset_label)
-                                .size(typography::BTN_SMALL)
-                                .strong(),
-                        )
-                        .clicked()
-                    {
-                        *value = preset_val;
-                        changed = true;
-                    }
-                });
+        if let Some((preset_label, preset_val)) = preset {
+            if ui
+                .button(
+                    RichText::new(preset_label)
+                        .size(typography::BTN_SMALL)
+                        .strong(),
+                )
+                .clicked()
+            {
+                *value = preset_val;
+                changed = true;
             }
-        });
-        ui.add_space(2.0);
+            ui.add_space(2.0);
+        } else {
+            ui.add_space(8.0);
+        }
         if ui
             .add(egui::Slider::new(value, range).suffix(suffix))
             .changed()
         {
             changed = true;
         }
-        ui.label(
-            RichText::new(desc)
-                .size(typography::CHIP_DESC)
-                .color(palette.text_secondary),
-        );
         changed
     })
 }
@@ -335,33 +350,18 @@ fn render_action_chip(
     action_label: &str,
     mut on_action: impl FnMut(),
 ) {
-    render_chip_frame(ui, palette.is_dark, palette.card_border, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(title)
-                    .size(typography::CHIP_TITLE)
-                    .strong()
-                    .color(palette.text_primary),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button(
-                        RichText::new(action_label)
-                            .size(typography::BTN_SMALL)
-                            .strong(),
-                    )
-                    .clicked()
-                {
-                    on_action();
-                }
-            });
-        });
-        ui.add_space(2.0);
-        ui.label(
-            RichText::new(desc)
-                .size(typography::CHIP_DESC)
-                .color(palette.text_secondary),
-        );
+    render_two_col_chip(ui, palette, title, desc, |ui| {
+        ui.add_space(4.0);
+        if ui
+            .button(
+                RichText::new(action_label)
+                    .size(typography::BTN_SMALL)
+                    .strong(),
+            )
+            .clicked()
+        {
+            on_action();
+        }
     });
 }
 
@@ -372,31 +372,16 @@ fn render_info_chip(
     desc: &str,
     badge: Option<(&str, Color32)>,
 ) {
-    render_chip_frame(ui, palette.is_dark, palette.card_border, |ui| {
-        ui.horizontal(|ui| {
+    render_two_col_chip(ui, palette, title, desc, |ui| {
+        ui.add_space(6.0);
+        if let Some((badge_text, badge_color)) = badge {
             ui.label(
-                RichText::new(title)
-                    .size(typography::CHIP_TITLE)
+                RichText::new(badge_text)
+                    .size(typography::BTN_NORMAL)
                     .strong()
-                    .color(palette.text_primary),
+                    .color(badge_color),
             );
-            if let Some((badge_text, badge_color)) = badge {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(badge_text)
-                            .size(typography::BTN_NORMAL)
-                            .strong()
-                            .color(badge_color),
-                    );
-                });
-            }
-        });
-        ui.add_space(2.0);
-        ui.label(
-            RichText::new(desc)
-                .size(typography::CHIP_DESC)
-                .color(palette.text_secondary),
-        );
+        }
     });
 }
 
@@ -2567,43 +2552,30 @@ impl OptimizerApp {
         render_settings_row!(
             ui,
             |ui| {
-                render_chip_frame(ui, p.is_dark, p.card_border, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("1. 🧹 Tự động dọn RAM khi đầy")
-                                .size(typography::CHIP_TITLE)
-                                .strong()
-                                .color(p.text_primary),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if render_switch(ui, &mut self.autonomous.auto_ram_enabled) {
-                                self.sync_config();
-                            }
-                        });
-                    });
-                    ui.add_space(2.0);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Thu hồi Working Set bộ nhớ đệm thừa")
-                                .size(typography::CHIP_DESC)
-                                .color(p.text_secondary),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .button(
-                                    RichText::new("⚡ Thu hồi ngay")
-                                        .size(typography::BTN_SMALL)
-                                        .strong(),
-                                )
-                                .clicked()
-                            {
-                                let (freed, count) = trim_working_sets(&mut self.sys);
-                                self.criteria_apply_msg =
-                                    format!("✓ Thu hồi {} từ {} tiến trình.", format_bytes(freed), count);
-                            }
-                        });
-                    });
-                });
+                render_two_col_chip(
+                    ui,
+                    &p,
+                    "1. 🧹 Tự động dọn RAM khi đầy",
+                    "Thu hồi Working Set bộ nhớ đệm thừa",
+                    |ui| {
+                        if render_switch(ui, &mut self.autonomous.auto_ram_enabled) {
+                            self.sync_config();
+                        }
+                        ui.add_space(3.0);
+                        if ui
+                            .button(
+                                RichText::new("⚡ Thu hồi ngay")
+                                    .size(typography::BTN_SMALL)
+                                    .strong(),
+                            )
+                            .clicked()
+                        {
+                            let (freed, count) = trim_working_sets(&mut self.sys);
+                            self.criteria_apply_msg =
+                                format!("✓ Thu hồi {} từ {} tiến trình.", format_bytes(freed), count);
+                        }
+                    },
+                );
             },
             |ui| {
                 let ram_total = self.autonomous.hardware_profile.ram_total_gb;
