@@ -32,6 +32,9 @@ pub struct HardwareProfile {
     pub dynamic_ram_threshold_pct: u32,
     pub is_ssd: bool,
     pub disk_name: String,
+    pub disk_total_bytes: u64,
+    pub disk_available_bytes: u64,
+    pub disk_fs: String,
     pub gpu_name: String,
     pub is_dedicated_gpu: bool,
     pub is_laptop: bool,
@@ -67,7 +70,7 @@ impl HardwareProfile {
         };
 
         // 4. Disk Info
-        let (is_ssd, disk_name) = detect_disk();
+        let (is_ssd, disk_name, disk_total_bytes, disk_available_bytes, disk_fs) = detect_disk();
 
         // 5. GPU Info
         let (gpu_name, is_dedicated_gpu) = detect_gpu();
@@ -101,6 +104,9 @@ impl HardwareProfile {
             dynamic_ram_threshold_pct,
             is_ssd,
             disk_name,
+            disk_total_bytes,
+            disk_available_bytes,
+            disk_fs,
             gpu_name,
             is_dedicated_gpu,
             is_laptop,
@@ -293,9 +299,12 @@ fn detect_cpu_mhz(sys: &System) -> u32 {
     2000
 }
 
-fn detect_disk() -> (bool, String) {
+fn detect_disk() -> (bool, String, u64, u64, String) {
     let mut disk_name = crate::reg::get_physical_disk_name_native();
     let mut is_ssd = false;
+    let mut disk_total_bytes = 0u64;
+    let mut disk_available_bytes = 0u64;
+    let mut disk_fs = "NTFS".to_string();
 
     // Check disk name keywords
     let upper = disk_name.to_uppercase();
@@ -313,6 +322,12 @@ fn detect_disk() -> (bool, String) {
             if !name.is_empty() && disk_name.is_empty() {
                 disk_name = name;
             }
+            disk_total_bytes += d.total_space();
+            disk_available_bytes += d.available_space();
+            let fs = d.file_system().to_string_lossy().to_string();
+            if !fs.is_empty() {
+                disk_fs = fs;
+            }
         }
     }
 
@@ -320,7 +335,7 @@ fn detect_disk() -> (bool, String) {
         disk_name = if is_ssd { "Ổ cứng SSD".to_string() } else { "Ổ cứng HDD".to_string() };
     }
 
-    (is_ssd, disk_name)
+    (is_ssd, disk_name, disk_total_bytes, disk_available_bytes, disk_fs)
 }
 
 fn detect_gpu() -> (String, bool) {

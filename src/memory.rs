@@ -17,6 +17,8 @@ pub struct MemStats {
     pub used_bytes: u64,
     pub free_bytes: u64,
     pub load_percent: u32,
+    pub pagefile_total_bytes: u64,
+    pub pagefile_used_bytes: u64,
 }
 
 pub fn get_memory_stats() -> MemStats {
@@ -27,11 +29,16 @@ pub fn get_memory_stats() -> MemStats {
             let total = status.ullTotalPhys;
             let free = status.ullAvailPhys;
             let used = total.saturating_sub(free);
+            let pf_total = status.ullTotalPageFile;
+            let pf_free = status.ullAvailPageFile;
+            let pf_used = pf_total.saturating_sub(pf_free);
             return MemStats {
                 total_bytes: total,
                 used_bytes: used,
                 free_bytes: free,
                 load_percent: status.dwMemoryLoad,
+                pagefile_total_bytes: pf_total,
+                pagefile_used_bytes: pf_used,
             };
         }
     }

@@ -1074,10 +1074,18 @@ impl OptimizerApp {
                     render_mini_bar(ui, (cpu / 100.0) as f32, cpu_color, p.tab_inactive_bg);
                     ui.add_space(4.0);
 
-                    ui.label(RichText::new(format!("• Phần cứng: {}P/{}T @ {} MHz", self.autonomous.hardware_profile.cpu_physical_cores, self.autonomous.hardware_profile.cpu_logical_cores, self.autonomous.hardware_profile.cpu_base_mhz)).size(10.0).color(p.text_secondary));
-                    ui.label(RichText::new(format!("• Xung trần: AC {}% | DC {}% (Sàn {}%)", self.cpu_limit_ac, self.cpu_limit_dc, self.cpu_min_state_pct)).size(10.0).color(p.text_secondary));
-                    ui.label(RichText::new(format!("• Điều phối: EcoQoS {} • Quantum {}", if self.autonomous.eco_qos_enabled { "Bật" } else { "Tắt" }, if self.win32_priority_boost { "38 (3x)" } else { "2" })).size(10.0).color(p.text_secondary));
-                    ui.label(RichText::new(format!("• Phản hồi: Timer {} • MMCSS {}", if self.timer_1ms_enabled { "1.0ms" } else { "15.6ms" }, if self.mmcss_optimized { "Bật" } else { "Tắt" })).size(10.0).color(p.text_secondary));
+                    let cur_cpu_mhz = self.sys.cpus().first().map(|c| c.frequency()).unwrap_or(self.autonomous.hardware_profile.cpu_base_mhz as u64) as u32;
+                    let full_cpu = self.autonomous.hardware_profile.cpu_brand
+                        .replace("(R)", "")
+                        .replace("(TM)", "")
+                        .replace("CPU", "")
+                        .trim()
+                        .to_string();
+
+                    ui.label(RichText::new(format!("• Vi xử lý: {}", full_cpu)).size(10.0).strong().color(p.text_primary));
+                    ui.label(RichText::new(format!("• Cấu trúc: {} Nhân thực / {} Luồng", self.autonomous.hardware_profile.cpu_physical_cores, self.autonomous.hardware_profile.cpu_logical_cores)).size(9.8).color(p.text_secondary));
+                    ui.label(RichText::new(format!("• Xung nhịp: Cơ sở {} MHz • Hiện tại {} MHz", self.autonomous.hardware_profile.cpu_base_mhz, cur_cpu_mhz)).size(9.8).color(p.text_secondary));
+                    ui.label(RichText::new(format!("• Giới hạn Turbo: AC {}% | DC {}% (Sàn {}%)", self.cpu_limit_ac, self.cpu_limit_dc, self.cpu_min_state_pct)).size(9.8).color(p.text_secondary));
 
                     ui.add_space(6.0);
                     let btn_txt = if is_cpu { "▲ Thu gọn" } else { "⚙ Cài đặt (17 thông số) ▾" };
@@ -1124,10 +1132,16 @@ impl OptimizerApp {
                     render_mini_bar(ui, (load as f32) / 100.0, ram_color, p.tab_inactive_bg);
                     ui.add_space(4.0);
 
-                    ui.label(RichText::new(format!("• Bộ nhớ trống: {} khả dụng", format_bytes(self.mem_stats.free_bytes))).size(10.0).color(p.text_secondary));
-                    ui.label(RichText::new(format!("• Auto-Trim: {} (Ngưỡng {}%)", if self.autonomous.auto_ram_enabled { "Bật" } else { "Tắt" }, self.ram_trim_threshold_pct)).size(10.0).color(p.text_secondary));
-                    ui.label(RichText::new(format!("• Nén RAM: {}", if self.memory_compression { "Bật (Tiết kiệm swap)" } else { "Tắt" })).size(10.0).color(p.text_secondary));
-                    ui.label(RichText::new(format!("• Cache tệp: {}", if self.large_system_cache { "LargeSystemCache Bật" } else { "Mặc định" })).size(10.0).color(p.text_secondary));
+                    let pf_used = self.mem_stats.pagefile_used_bytes;
+                    let pf_total = self.mem_stats.pagefile_total_bytes;
+                    ui.label(RichText::new(format!("• RAM vật lý: Dùng {} / {:.1} GB", format_bytes(self.mem_stats.used_bytes), self.autonomous.hardware_profile.ram_total_gb)).size(10.0).strong().color(p.text_primary));
+                    ui.label(RichText::new(format!("• Khả dụng: {} trống ({:.0}%)", format_bytes(self.mem_stats.free_bytes), (100.0 - load as f32).max(0.0))).size(9.8).color(p.text_secondary));
+                    if pf_total > 0 {
+                        ui.label(RichText::new(format!("• Bộ nhớ ảo (Pagefile): {} / {}", format_bytes(pf_used), format_bytes(pf_total))).size(9.8).color(p.text_secondary));
+                    } else {
+                        ui.label(RichText::new(format!("• Nén RAM: {}", if self.memory_compression { "Đang bật (Giảm swap)" } else { "Tắt" })).size(9.8).color(p.text_secondary));
+                    }
+                    ui.label(RichText::new(format!("• Auto Trim: Ngưỡng {}% • Nén RAM: {}", self.ram_trim_threshold_pct, if self.memory_compression { "Bật" } else { "Tắt" })).size(9.8).color(p.text_secondary));
 
                     ui.add_space(6.0);
                     let btn_txt = if is_ram { "▲ Thu gọn" } else { "⚙ Cài đặt (4 thông số) ▾" };
@@ -1192,23 +1206,52 @@ impl OptimizerApp {
                         });
 
                         render_mini_bar(ui, (bat as f32) / 100.0, bat_color, p.tab_inactive_bg);
+                        ui.add_space(4.0);
+
+                        let num_bats = self.dual_batteries.len();
+                        if num_bats >= 2 {
+                            let b1 = &self.dual_batteries[0];
+                            let b2 = &self.dual_batteries[1];
+                            let tot_design = (b1.design_capacity_mwh + b2.design_capacity_mwh) as f32 / 1000.0;
+                            let tot_full = (b1.full_charge_capacity_mwh + b2.full_charge_capacity_mwh) as f32 / 1000.0;
+                            let avg_wear = if tot_design > 0.0 {
+                                ((1.0 - (tot_full / tot_design)) * 100.0).clamp(0.0, 100.0)
+                            } else {
+                                0.0
+                            };
+                            ui.label(RichText::new(format!("• Số lượng: 2 pin (Pin kép) • Chai TB: {:.1}%", avg_wear)).size(10.0).strong().color(p.text_primary));
+                            ui.label(RichText::new(format!("• Pin 1 ({}): Chai {:.1}% • {} chu kỳ ({}%)", b1.id, b1.wear_percent, b1.cycle_count, b1.current_charge_percent)).size(9.8).color(p.text_secondary));
+                            ui.label(RichText::new(format!("• Pin 2 ({}): Chai {:.1}% • {} chu kỳ ({}%)", b2.id, b2.wear_percent, b2.cycle_count, b2.current_charge_percent)).size(9.8).color(p.text_secondary));
+                            ui.label(RichText::new(format!("• Dung lượng: {:.1} Wh sạc đầy / {:.1} Wh gốc", tot_full, tot_design)).size(9.8).color(p.text_secondary));
+                        } else if num_bats == 1 {
+                            let b = &self.dual_batteries[0];
+                            let health = (100.0 - b.wear_percent).clamp(0.0, 100.0);
+                            let full_wh = b.full_charge_capacity_mwh as f32 / 1000.0;
+                            let design_wh = b.design_capacity_mwh as f32 / 1000.0;
+                            ui.label(RichText::new(format!("• Số lượng: 1 pin ({})", b.id)).size(10.0).strong().color(p.text_primary));
+                            ui.label(RichText::new(format!("• Mức độ chai: {:.1}% (Độ khỏe pin: {:.1}%)", b.wear_percent, health)).size(9.8).color(p.text_secondary));
+                            ui.label(RichText::new(format!("• Chu kỳ sạc: {} lần • {:.1} / {:.1} Wh", b.cycle_count, full_wh, design_wh)).size(9.8).color(p.text_secondary));
+                            let bat_care_str = if self.protection.battery_threshold_enabled { "Khóa 80% (Bảo vệ pin)" } else { "100% Sạc đầy" };
+                            ui.label(RichText::new(format!("• Ngưỡng sạc: {}", bat_care_str)).size(9.8).color(p.text_secondary));
+                        } else {
+                            ui.label(RichText::new("• Số lượng: 1 pin (Đang nhận diện mức chai...)").size(10.0).strong().color(p.text_primary));
+                            ui.label(RichText::new(format!("• Trạng thái: {}", if self.power_status.is_ac_online { "Đang cắm nguồn AC" } else { "Đang dùng pin" })).size(9.8).color(p.text_secondary));
+                            let bat_care_str = if self.protection.battery_threshold_enabled { "Khóa 80% (Bảo vệ pin)" } else { "100% Sạc đầy" };
+                            ui.label(RichText::new(format!("• Chế độ sạc: {}", bat_care_str)).size(9.8).color(p.text_secondary));
+                            ui.label(RichText::new(format!("• Quạt làm mát: {}", if self.cooling_active { "Active" } else { "Passive (0dB)" })).size(9.8).color(p.text_secondary));
+                        }
                     } else {
                         ui.horizontal(|ui| {
                             ui.heading(RichText::new("Nguồn AC").size(22.0).strong().color(p.accent_blue));
                             ui.label(RichText::new("PC để bàn • 220V").size(11.0).strong().color(p.text_primary));
                         });
                         render_mini_bar(ui, 1.0, p.accent_blue, p.tab_inactive_bg);
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("• Số lượng pin: 0 (Nguồn AC trực tiếp)").size(10.0).strong().color(p.text_primary));
+                        ui.label(RichText::new("• Mức chai: Không áp dụng (PC không pin)").size(9.8).color(p.text_secondary));
+                        ui.label(RichText::new("• Cung cấp điện: Nguồn AC trực tiếp 220V").size(9.8).color(p.text_secondary));
+                        ui.label(RichText::new(format!("• Quạt tản nhiệt: {}", if self.cooling_active { "Active (Làm mát tối đa)" } else { "Passive (0dB)" })).size(9.8).color(p.text_secondary));
                     }
-                    ui.add_space(4.0);
-
-                    let bat_care_str = if self.protection.battery_threshold_enabled { "Khóa 80% (Bảo vệ pin)" } else { "100% (Sạc đầy)" };
-                    ui.label(RichText::new(format!("• Ngưỡng sạc: {}", bat_care_str)).size(10.0).color(p.text_secondary));
-                    let fan_str = if self.cooling_active { "Active (Làm mát tối đa)" } else { "Passive (0dB tĩnh lặng)" };
-                    ui.label(RichText::new(format!("• Quạt tản nhiệt: {}", fan_str)).size(10.0).color(p.text_secondary));
-                    let sleep_str = if self.keep_awake_mode == 2 { "Chống Sleep (Luôn thức)" } else { "Sleep mặc định OS" };
-                    ui.label(RichText::new(format!("• Chế độ thức: {}", sleep_str)).size(10.0).color(p.text_secondary));
-                    let hib_str = if self.protection.is_hibernate_enabled { "Bật (Ngủ an toàn)" } else { "Tắt" };
-                    ui.label(RichText::new(format!("• Ngủ đông: {}", hib_str)).size(10.0).color(p.text_secondary));
 
                     ui.add_space(6.0);
                     let btn_txt = if is_pin { "▲ Thu gọn" } else { "⚙ Cài đặt (6 thông số) ▾" };
@@ -1246,22 +1289,28 @@ impl OptimizerApp {
                     ui.add_space(2.0);
 
                     let drv_type = if self.autonomous.hardware_profile.is_ssd { "SSD Siêu tốc" } else { "HDD Cơ học" };
+                    let d_total = self.autonomous.hardware_profile.disk_total_bytes;
+                    let d_avail = self.autonomous.hardware_profile.disk_available_bytes;
+                    let d_used = d_total.saturating_sub(d_avail);
+                    let frac = if d_total > 0 { (d_used as f32 / d_total as f32).clamp(0.0, 1.0) } else { 0.5 };
+                    let drv_pct = (frac * 100.0) as u32;
+
                     ui.horizontal(|ui| {
-                        ui.heading(RichText::new(drv_type).size(22.0).strong().color(p.accent_blue));
-                        let clean_disk = self.autonomous.hardware_profile.disk_name.chars().take(18).collect::<String>();
-                        ui.label(RichText::new(clean_disk).size(11.0).strong().color(p.text_primary));
+                        ui.heading(RichText::new(format!("{}%", drv_pct)).size(22.0).strong().color(p.accent_blue));
+                        ui.label(RichText::new(format!("{} • {}", drv_type, format_bytes(d_total))).size(11.0).strong().color(p.text_primary));
                     });
 
-                    render_mini_bar(ui, 0.95, p.accent_blue, p.tab_inactive_bg);
+                    render_mini_bar(ui, frac, p.accent_blue, p.tab_inactive_bg);
                     ui.add_space(4.0);
 
-                    ui.label(RichText::new(format!("• Rác hệ thống: {} (3 tầng)", format_bytes(total_junk))).size(10.0).color(p.text_secondary));
-                    let trim_str = if self.trim_enabled { "Bật (DeleteNotify: 0)" } else { "Tắt" };
-                    ui.label(RichText::new(format!("• SSD TRIM: {}", trim_str)).size(10.0).color(p.text_secondary));
-                    let ntfs_str = format!("LastAccess {} • 8.3 {}", if self.disable_ntfs_last_access { "Tắt" } else { "Bật" }, if self.disable_8dot3_name { "Tắt" } else { "Bật" });
-                    ui.label(RichText::new(format!("• NTFS tối ưu: {}", ntfs_str)).size(10.0).color(p.text_secondary));
-                    let sysmain_str = if self.sysmain_disabled { "Đã tắt (Tối ưu SSD)" } else { "Đang bật (HDD)" };
-                    ui.label(RichText::new(format!("• SysMain: {}", sysmain_str)).size(10.0).color(p.text_secondary));
+                    let clean_disk = self.autonomous.hardware_profile.disk_name.chars().take(24).collect::<String>();
+                    ui.label(RichText::new(format!("• Thiết bị: {}", clean_disk)).size(10.0).strong().color(p.text_primary));
+                    if d_total > 0 {
+                        ui.label(RichText::new(format!("• Dung lượng: Dùng {} / Trống {}", format_bytes(d_used), format_bytes(d_avail))).size(9.8).color(p.text_secondary));
+                    }
+                    let trim_str = if self.trim_enabled { "Bật" } else { "Tắt" };
+                    ui.label(RichText::new(format!("• Định dạng: {} • SSD TRIM: {}", self.autonomous.hardware_profile.disk_fs, trim_str)).size(9.8).color(p.text_secondary));
+                    ui.label(RichText::new(format!("• Rác hệ thống: {} (Quét 3 tầng)", format_bytes(total_junk))).size(9.8).color(p.text_secondary));
 
                     ui.add_space(6.0);
                     let btn_txt = if is_drv { "▲ Thu gọn" } else { "⚙ Cài đặt (6 thông số) ▾" };
