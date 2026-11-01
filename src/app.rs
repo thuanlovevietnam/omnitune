@@ -1398,27 +1398,12 @@ impl OptimizerApp {
         }
 
         // --- HEALTH & HERO ACTION CARD ---
-        let (score, score_label, score_color, tips) = self.calculate_health_score();
+        let (score, score_label, score_color, _tips) = self.calculate_health_score();
         p.modern_card(ui, |ui| {
             ui.columns(2, |cols| {
                 // Cột 1: Mô tả và nút click (Center)
                 cols[0].vertical_centered(|ui| {
-                    ui.add_space(2.0);
-                    if let Some(tip) = tips.first() {
-                        ui.label(
-                            RichText::new(format!("💡 {}", tip))
-                                .size(typography::BODY_TEXT)
-                                .color(p.text_secondary),
-                        );
-                    } else {
-                        ui.label(
-                            RichText::new("💡 Hệ thống đang ở trạng thái tối ưu")
-                                .size(typography::BODY_TEXT)
-                                .color(p.text_secondary),
-                        );
-                    }
-
-                    ui.add_space(6.0);
+                    ui.add_space(4.0);
 
                     // 5 nút thiết lập & chế độ tự hành
                     ui.horizontal_wrapped(|ui| {
