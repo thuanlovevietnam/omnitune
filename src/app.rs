@@ -247,42 +247,27 @@ fn render_two_col_chip<R>(
     render_controls: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
     render_chip_frame(ui, palette.is_dark, palette.card_border, |ui| {
-        let total_w = ui.available_width();
-        let left_w = (total_w * 0.60).clamp(180.0, 240.0);
-        let right_w = (total_w - left_w - 6.0).max(80.0);
+        ui.columns(2, |cols| {
+            cols[0].vertical(|ui| {
+                ui.label(
+                    RichText::new(title)
+                        .size(typography::CHIP_TITLE)
+                        .strong()
+                        .color(palette.text_primary),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    RichText::new(desc)
+                        .size(typography::CHIP_DESC)
+                        .color(palette.text_secondary),
+                );
+            });
 
-        ui.horizontal(|ui| {
-            // CỘT 1 (60%): Thông tin & mô tả
-            ui.allocate_ui_with_layout(
-                Vec2::new(left_w, 0.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.label(
-                        RichText::new(title)
-                            .size(typography::CHIP_TITLE)
-                            .strong()
-                            .color(palette.text_primary),
-                    );
-                    ui.add_space(2.0);
-                    ui.label(
-                        RichText::new(desc)
-                            .size(typography::CHIP_DESC)
-                            .color(palette.text_secondary),
-                    );
-                },
-            );
-
-            ui.add_space(6.0);
-
-            // CỘT 2 (40%): Điều khiển & Tác vụ
-            ui.allocate_ui_with_layout(
-                Vec2::new(right_w, 0.0),
-                egui::Layout::top_down(egui::Align::Max),
-                render_controls,
-            )
+            cols[1].with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                render_controls(ui)
+            })
             .inner
         })
-        .inner
     })
 }
 
