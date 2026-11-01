@@ -1684,28 +1684,28 @@ impl OptimizerApp {
             let (part_icon, part_title, count, clean_btn_txt, clean_tooltip) = match active {
                 PartitionTab::Cpu => (
                     "⚡",
-                    "PHÂN VÙNG CPU & ĐIỀU ĐỘ TIẾN TRÌNH",
+                    "CPU & TIẾN TRÌNH",
                     17,
                     "🧹 DỌN TIẾN TRÌNH & ÉP ECOQOS NGAY",
                     "Tối ưu mức ưu tiên và ép chế độ tiết kiệm EcoQoS cho các app ngầm",
                 ),
                 PartitionTab::Ram => (
                     "🧠",
-                    "PHÂN VÙNG BỘ NHỚ RAM & CACHE",
+                    "RAM & CACHE",
                     4,
                     "🧹 THU HỒI WORKING SET & DỌN RAM NGAY",
                     "Thu hồi bộ nhớ đệm thừa từ tất cả các tiến trình",
                 ),
                 PartitionTab::Pin => (
                     "🔋",
-                    "PHÂN VÙNG PIN, NGUỒN ĐIỆN & TẢN NHIỆT",
+                    "PIN, NGUỒN ĐIỆN & TẢN NHIỆT",
                     6,
                     "🧹 KÍCH HOẠT TIẾT KIỆM ĐIỆN TỨC THÌ",
                     "Hạ độ sáng, kích hoạt tản nhiệt êm và hạn chế xung CPU khi dùng pin",
                 ),
                 PartitionTab::Drive => (
                     "💾",
-                    "PHÂN VÙNG LƯU TRỮ & Ổ ĐĨA SSD/HDD",
+                    "LƯU TRỮ & Ổ ĐĨA SSD/HDD",
                     6,
                     "🧹 DỌN RÁC TẦNG 1 & SSD TRIM NGAY",
                     "Xóa sạch tệp rác Tầng 1 an toàn và chủ động kích hoạt TRIM khối nhớ SSD",
@@ -1714,7 +1714,7 @@ impl OptimizerApp {
 
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(format!("{} CHI TIẾT & HÀNH ĐỘNG: {} ({} THÔNG SỐ)", part_icon, part_title, count))
+                    RichText::new(format!("{} {} ({} THÔNG SỐ)", part_icon, part_title, count))
                         .size(typography::SECTION_TITLE)
                         .strong()
                         .color(p.accent_blue),
