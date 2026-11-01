@@ -211,13 +211,13 @@ fn render_chip_frame<R>(
         Color32::from_rgb(248, 250, 252)
     };
     egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(10, 8))
+        .inner_margin(egui::Margin::symmetric(12, 10))
         .corner_radius(CornerRadius::same(spacing::CHIP_RADIUS))
         .fill(bg)
         .stroke(Stroke::new(1.0, border_color))
         .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.set_min_height(62.0);
+            ui.set_width(ui.available_width());
+            ui.set_height(66.0);
             add_contents(ui)
         })
         .inner
@@ -229,6 +229,7 @@ fn render_chip_frame<R>(
 
 macro_rules! render_settings_row {
     ($ui:expr, |$c1:ident| $b1:expr, |$c2:ident| $b2:expr $(,)?) => {
+        $ui.spacing_mut().item_spacing.x = 10.0;
         $ui.columns(2, |cols| {
             {
                 let $c1 = &mut cols[0];
@@ -239,7 +240,7 @@ macro_rules! render_settings_row {
                 $b2;
             }
         });
-        $ui.add_space(4.0);
+        $ui.add_space(8.0);
     };
 }
 
@@ -251,27 +252,44 @@ fn matrix_box<R>(
     button: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
     render_chip_frame(ui, palette.is_dark, palette.card_border, |ui| {
-        ui.columns(2, |cols| {
+        let avail_w = ui.available_width();
+        let avail_h = ui.available_height();
+        let btn_w = 115.0f32.min(avail_w * 0.36);
+        let info_w = (avail_w - btn_w - 8.0).max(80.0);
+
+        ui.horizontal(|ui| {
             // Cột 1: info (Tiêu đề + Mô tả)
-            cols[0].vertical(|ui| {
-                ui.label(
-                    RichText::new(title)
-                        .size(typography::CHIP_TITLE)
-                        .strong()
-                        .color(palette.text_primary),
-                );
-                ui.add_space(2.0);
-                ui.label(
-                    RichText::new(desc)
-                        .size(typography::CHIP_DESC)
-                        .color(palette.text_secondary),
-                );
-            });
+            ui.allocate_ui_with_layout(
+                Vec2::new(info_w, avail_h),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(info_w);
+                    ui.label(
+                        RichText::new(title)
+                            .size(typography::CHIP_TITLE)
+                            .strong()
+                            .color(palette.text_primary),
+                    );
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new(desc)
+                            .size(typography::CHIP_DESC)
+                            .color(palette.text_secondary),
+                    );
+                },
+            );
+
+            ui.add_space(8.0);
 
             // Cột 2: button (Nút bấm, Switch, Slider, Thao tác)
-            cols[1].with_layout(egui::Layout::top_down(egui::Align::Max), button)
-                .inner
+            ui.allocate_ui_with_layout(
+                Vec2::new(btn_w, avail_h),
+                egui::Layout::right_to_left(egui::Align::Center),
+                button,
+            )
+            .inner
         })
+        .inner
     })
 }
 
@@ -284,7 +302,6 @@ fn render_switch_chip(
     custom_labels: Option<(&str, &str)>,
 ) -> bool {
     matrix_box(ui, palette, title, desc, |ui| {
-        ui.add_space(16.0);
         if let Some((on, off)) = custom_labels {
             render_switch_custom(ui, value, on, off)
         } else {
@@ -305,29 +322,28 @@ fn render_slider_chip<T: egui::emath::Numeric>(
 ) -> bool {
     matrix_box(ui, palette, title, desc, |ui| {
         let mut changed = false;
-        if let Some((preset_label, preset_val)) = preset {
-            ui.add_space(8.0);
+        ui.vertical(|ui| {
+            if let Some((preset_label, preset_val)) = preset {
+                if ui
+                    .button(
+                        RichText::new(preset_label)
+                            .size(typography::BTN_SMALL)
+                            .strong(),
+                    )
+                    .clicked()
+                {
+                    *value = preset_val;
+                    changed = true;
+                }
+                ui.add_space(2.0);
+            }
             if ui
-                .button(
-                    RichText::new(preset_label)
-                        .size(typography::BTN_SMALL)
-                        .strong(),
-                )
-                .clicked()
+                .add(egui::Slider::new(value, range).suffix(suffix))
+                .changed()
             {
-                *value = preset_val;
                 changed = true;
             }
-            ui.add_space(2.0);
-        } else {
-            ui.add_space(18.0);
-        }
-        if ui
-            .add(egui::Slider::new(value, range).suffix(suffix))
-            .changed()
-        {
-            changed = true;
-        }
+        });
         changed
     })
 }
@@ -341,7 +357,6 @@ fn render_action_chip(
     mut on_action: impl FnMut(),
 ) {
     matrix_box(ui, palette, title, desc, |ui| {
-        ui.add_space(16.0);
         if ui
             .button(
                 RichText::new(action_label)
@@ -363,7 +378,6 @@ fn render_info_chip(
     badge: Option<(&str, Color32)>,
 ) {
     matrix_box(ui, palette, title, desc, |ui| {
-        ui.add_space(18.0);
         if let Some((badge_text, badge_color)) = badge {
             ui.label(
                 RichText::new(badge_text)
@@ -399,11 +413,13 @@ fn render_partition_card(
     };
 
     let response = egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(12, 10))
+        .inner_margin(egui::Margin::symmetric(14, 10))
         .corner_radius(CornerRadius::same(spacing::CARD_RADIUS))
         .fill(card_bg)
         .stroke(card_stroke)
         .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.set_height(58.0);
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(icon_title)
@@ -1549,12 +1565,13 @@ impl OptimizerApp {
             self.selected_partition = if is_ram { None } else { Some(PartitionTab::Ram) };
         }
 
-        ui.add_space(6.0);
+        ui.add_space(10.0);
 
         // Row 2: PIN (Col 0) & DRIVE (Col 1)
         let mut pin_clicked = false;
         let mut drv_clicked = false;
 
+        ui.spacing_mut().item_spacing.x = 10.0;
         ui.columns(2, |cols| {
             // Card 3: PIN
             pin_clicked = render_partition_card(
@@ -1631,7 +1648,7 @@ impl OptimizerApp {
 
         // --- EXPANDABLE UNIFIED CARD FOR SELECTED PARTITION ---
         if let Some(active) = self.selected_partition {
-            ui.add_space(8.0);
+            ui.add_space(12.0);
             self.render_partition_unified_view(ui, active);
         }
     }
@@ -2548,23 +2565,24 @@ impl OptimizerApp {
                     "1. 🧹 Tự động dọn RAM khi đầy",
                     "Thu hồi Working Set bộ nhớ đệm thừa",
                     |ui| {
-                        ui.add_space(5.0);
-                        if render_switch(ui, &mut self.autonomous.auto_ram_enabled) {
-                            self.sync_config();
-                        }
-                        ui.add_space(3.0);
-                        if ui
-                            .button(
-                                RichText::new("⚡ Thu hồi ngay")
-                                    .size(typography::BTN_SMALL)
-                                    .strong(),
-                            )
-                            .clicked()
-                        {
-                            let (freed, count) = trim_working_sets(&mut self.sys);
-                            self.criteria_apply_msg =
-                                format!("✓ Thu hồi {} từ {} tiến trình.", format_bytes(freed), count);
-                        }
+                        ui.vertical(|ui| {
+                            if render_switch(ui, &mut self.autonomous.auto_ram_enabled) {
+                                self.sync_config();
+                            }
+                            ui.add_space(2.0);
+                            if ui
+                                .button(
+                                    RichText::new("⚡ Thu hồi ngay")
+                                        .size(typography::BTN_SMALL)
+                                        .strong(),
+                                )
+                                .clicked()
+                            {
+                                let (freed, count) = trim_working_sets(&mut self.sys);
+                                self.criteria_apply_msg =
+                                    format!("✓ Thu hồi {} từ {} tiến trình.", format_bytes(freed), count);
+                            }
+                        });
                     },
                 );
             },
