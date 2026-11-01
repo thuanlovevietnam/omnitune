@@ -1636,38 +1636,6 @@ impl OptimizerApp {
 
         ui.add_space(8.0);
 
-        // --- FOREGROUND GOVERNOR CARD ---
-        p.modern_card(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new("Cửa sổ Focus:").size(13.0).strong().color(p.text_secondary));
-                        if let Some((_, ref name)) = self.foreground_info {
-                            ui.label(RichText::new(name).size(13.5).strong().color(p.accent_blue));
-                        } else {
-                            ui.label(RichText::new("Chưa xác định").size(12.5).color(p.text_secondary));
-                        }
-                    });
-                    ui.label(
-                        RichText::new("Tự động ưu tiên luồng cho cửa sổ đang dùng, hạ EcoQoS app ngầm.")
-                            .size(12.2)
-                            .color(p.text_secondary),
-                    );
-                });
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.checkbox(
-                        &mut self.autonomous.eco_qos_enabled,
-                        RichText::new("EcoQoS Bật").size(12.5).strong().color(p.accent_blue),
-                    ).changed() {
-                        self.sync_config();
-                    }
-                });
-            });
-        });
-
-        ui.add_space(8.0);
-
         // --- CHẾ ĐỘ TỐI ƯU HỆ THỐNG & AUTONOMOUS MODES ---
         p.modern_card(ui, |ui| {
             ui.label(RichText::new("CHẾ ĐỘ TỐI ƯU HỆ THỐNG").size(13.0).strong().color(p.accent_blue));
@@ -1737,6 +1705,13 @@ impl OptimizerApp {
                     if ui.checkbox(
                         &mut self.autonomous.auto_ram_enabled,
                         RichText::new("Auto-RAM").size(12.5).strong().color(p.accent_blue),
+                    ).changed() {
+                        self.sync_config();
+                    }
+                    ui.add_space(6.0);
+                    if ui.checkbox(
+                        &mut self.autonomous.eco_qos_enabled,
+                        RichText::new("EcoQoS").size(12.5).strong().color(p.accent_blue),
                     ).changed() {
                         self.sync_config();
                     }
