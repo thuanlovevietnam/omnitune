@@ -463,6 +463,154 @@ pub fn set_ntfs_last_access(disable: bool) -> bool {
         .unwrap_or(false)
 }
 
+pub fn set_cpu_min_state(percent: u32) -> bool {
+    let pct_str = percent.clamp(1, 100).to_string();
+    let schemes = [
+        "SCHEME_CURRENT",
+        "381b4222-f694-41f0-9685-ff5bb260df2e",
+        "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+        "a1841308-3541-4fab-bc81-f71556f20b4a",
+    ];
+
+    for s in schemes {
+        let _ = Command::new("powercfg")
+            .args(["/setdcvalueindex", s, "SUB_PROCESSOR", "PROCTHROTTLEMIN", &pct_str])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        let _ = Command::new("powercfg")
+            .args(["/setacvalueindex", s, "SUB_PROCESSOR", "PROCTHROTTLEMIN", &pct_str])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    true
+}
+
+pub fn set_win32_priority_separation(boost: bool) -> bool {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    let val = if boost { 38 } else { 2 };
+    crate::reg::reg_set_u32(
+        HKEY_LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Control\PriorityControl",
+        "Win32PrioritySeparation",
+        val,
+    )
+}
+
+pub fn set_fast_shutdown_recovery(enable: bool) -> bool {
+    use windows_sys::Win32::System::Registry::HKEY_CURRENT_USER;
+    let auto_end = if enable { "1" } else { "0" };
+    let hung_to = if enable { "1000" } else { "5000" };
+    let wait_app = if enable { "2000" } else { "10000" };
+    crate::reg::reg_set_string(HKEY_CURRENT_USER, r"Control Panel\Desktop", "AutoEndTasks", auto_end);
+    crate::reg::reg_set_string(HKEY_CURRENT_USER, r"Control Panel\Desktop", "HungAppTimeout", hung_to);
+    crate::reg::reg_set_string(HKEY_CURRENT_USER, r"Control Panel\Desktop", "WaitToKillAppTimeout", wait_app);
+    true
+}
+
+pub fn set_large_system_cache(enable: bool) -> bool {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    let val = if enable { 1 } else { 0 };
+    crate::reg::reg_set_u32(
+        HKEY_LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management",
+        "LargeSystemCache",
+        val,
+    )
+}
+
+pub fn set_memory_compression(enable: bool) -> bool {
+    let cmd = if enable { "Enable-MMAgent -MemoryCompression" } else { "Disable-MMAgent -MemoryCompression" };
+    Command::new("powershell")
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", cmd])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub fn set_ntfs_8dot3_name(disable: bool) -> bool {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    let val = if disable { 1 } else { 0 };
+    let _ = crate::reg::reg_set_u32(
+        HKEY_LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Control\FileSystem",
+        "NtfsDisable8dot3NameCreation",
+        val,
+    );
+    let opt = if disable { "1" } else { "0" };
+    Command::new("fsutil")
+        .args(["behavior", "set", "disable8dot3", opt])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub fn set_ssd_trim(enable: bool) -> bool {
+    // 0 = DisableDeleteNotify is disabled (meaning TRIM is ENABLED)
+    let val = if enable { "0" } else { "1" };
+    Command::new("fsutil")
+        .args(["behavior", "set", "DisableDeleteNotify", val])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub fn set_wait_to_kill_service(fast: bool) -> bool {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    let val = if fast { "2000" } else { "5000" };
+    crate::reg::reg_set_string(
+        HKEY_LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Control",
+        "WaitToKillServiceTimeout",
+        val,
+    )
+}
+
+pub fn set_menu_show_delay(zero: bool) -> bool {
+    use windows_sys::Win32::System::Registry::HKEY_CURRENT_USER;
+    let val = if zero { "0" } else { "400" };
+    crate::reg::reg_set_string(
+        HKEY_CURRENT_USER,
+        r"Control Panel\Desktop",
+        "MenuShowDelay",
+        val,
+    )
+}
+
+pub fn set_startup_delay(zero: bool) -> bool {
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    let val = if zero { 0 } else { 10000 };
+    crate::reg::reg_set_u32(
+        HKEY_CURRENT_USER,
+        r"Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize",
+        "StartupDelayInMSec",
+        val,
+    );
+    crate::reg::reg_set_u32(
+        HKEY_LOCAL_MACHINE,
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Serialize",
+        "StartupDelayInMSec",
+        val,
+    );
+    true
+}
+
+pub fn set_tcp_ecn(enable: bool) -> bool {
+    let state = if enable { "enabled" } else { "disabled" };
+    Command::new("netsh")
+        .args(["int", "tcp", "set", "global", &format!("ecncapability={}", state)])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 pub fn set_mmcss_gaming_responsiveness(enable: bool) -> bool {
     use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
     let net_val = if enable { 0xFFFFFFFF } else { 10 };

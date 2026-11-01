@@ -23,6 +23,10 @@ fn default_ram_threshold() -> u32 {
     80
 }
 
+fn default_5() -> u32 {
+    5
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub timer_1ms_enabled: bool,
@@ -55,6 +59,44 @@ pub struct AppConfig {
     pub mmcss_optimized: bool,
     #[serde(default = "default_true")]
     pub tcp_autotuning: bool,
+
+    // Nhóm 1: CPU & Điều độ
+    #[serde(default = "default_5")]
+    pub cpu_min_state_pct: u32,
+    #[serde(default = "default_true")]
+    pub win32_priority_boost: bool,
+    #[serde(default = "default_true")]
+    pub fast_shutdown_recovery: bool,
+
+    // Nhóm 2: RAM & Cache
+    #[serde(default = "default_true")]
+    pub large_system_cache: bool,
+    #[serde(default = "default_true")]
+    pub memory_compression: bool,
+
+    // Nhóm 3: Ổ đĩa SSD/HDD
+    #[serde(default = "default_true")]
+    pub disable_8dot3_name: bool,
+    #[serde(default = "default_true")]
+    pub trim_enabled: bool,
+    #[serde(default = "default_true")]
+    pub wait_to_kill_service: bool,
+
+    // Nhóm 4: Đồ họa & Độ trễ
+    #[serde(default = "default_true")]
+    pub menu_show_delay_zero: bool,
+    #[serde(default = "default_true")]
+    pub startup_delay_zero: bool,
+
+    // Nhóm 5: Mạng TCP/IP
+    #[serde(default = "default_true")]
+    pub system_responsiveness_zero: bool,
+    #[serde(default = "default_true")]
+    pub tcp_ecn_enabled: bool,
+
+    // Nhóm 7: Telemetry & DiagTrack
+    #[serde(default = "default_true")]
+    pub disable_telemetry: bool,
 }
 
 impl Default for AppConfig {
@@ -80,6 +122,20 @@ impl Default for AppConfig {
             disable_ntfs_last_access: true,
             mmcss_optimized: true,
             tcp_autotuning: true,
+
+            cpu_min_state_pct: 5,
+            win32_priority_boost: true,
+            fast_shutdown_recovery: true,
+            large_system_cache: true,
+            memory_compression: true,
+            disable_8dot3_name: true,
+            trim_enabled: true,
+            wait_to_kill_service: true,
+            menu_show_delay_zero: true,
+            startup_delay_zero: true,
+            system_responsiveness_zero: true,
+            tcp_ecn_enabled: true,
+            disable_telemetry: true,
         }
     }
 }
