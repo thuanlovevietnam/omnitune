@@ -1638,28 +1638,6 @@ impl OptimizerApp {
                         .strong()
                         .color(p.accent_blue),
                 );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.checkbox(
-                        &mut self.autonomous.auto_pilot_enabled,
-                        RichText::new("Auto-Pilot").size(12.5).strong().color(p.success_green),
-                    ).changed() {
-                        self.sync_config();
-                    }
-                    ui.add_space(6.0);
-                    if ui.checkbox(
-                        &mut self.autonomous.auto_ram_enabled,
-                        RichText::new("Auto-RAM").size(12.5).strong().color(p.accent_blue),
-                    ).changed() {
-                        self.sync_config();
-                    }
-                    ui.add_space(6.0);
-                    if ui.checkbox(
-                        &mut self.autonomous.eco_qos_enabled,
-                        RichText::new("EcoQoS").size(12.5).strong().color(p.accent_blue),
-                    ).changed() {
-                        self.sync_config();
-                    }
-                });
             });
             ui.separator();
             ui.add_space(2.0);
@@ -1684,6 +1662,28 @@ impl OptimizerApp {
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("⚙ THIẾT LẬP HỆ THỐNG & KHỞI ĐỘNG").size(13.0).strong().color(p.accent_blue));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.checkbox(
+                        &mut self.autonomous.auto_pilot_enabled,
+                        RichText::new("Auto-Pilot").size(12.5).strong().color(p.success_green),
+                    ).changed() {
+                        self.sync_config();
+                    }
+                    ui.add_space(6.0);
+                    if ui.checkbox(
+                        &mut self.autonomous.auto_ram_enabled,
+                        RichText::new("Auto-RAM").size(12.5).strong().color(p.accent_blue),
+                    ).changed() {
+                        self.sync_config();
+                    }
+                    ui.add_space(6.0);
+                    if ui.checkbox(
+                        &mut self.autonomous.eco_qos_enabled,
+                        RichText::new("EcoQoS").size(12.5).strong().color(p.accent_blue),
+                    ).changed() {
+                        self.sync_config();
+                    }
+                });
             });
             ui.separator();
             ui.add_space(4.0);
