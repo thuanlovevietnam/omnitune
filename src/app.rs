@@ -42,12 +42,6 @@ pub enum PartitionTab {
     Drive,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PartitionViewMode {
-    Action,
-    Detail,
-}
-
 pub struct InitialScanResult {
     pub mem_stats: MemStats,
     pub top_processes: Vec<ProcessMemInfo>,
@@ -164,7 +158,6 @@ pub struct OptimizerApp {
 
     // 4 Partitions Selection on Home screen
     selected_partition: Option<PartitionTab>,
-    partition_view_mode: PartitionViewMode,
 }
 
 fn render_switch_custom(ui: &mut egui::Ui, value: &mut bool, on_text: &str, off_text: &str) -> bool {
@@ -404,22 +397,15 @@ fn render_info_chip(
     });
 }
 
-pub struct PartitionCardResponse {
-    pub action_clicked: bool,
-    pub detail_clicked: bool,
-}
-
 fn render_partition_card(
     ui: &mut egui::Ui,
     palette: &ThemePalette,
     icon_title: &str,
     param_count: usize,
-    is_action_active: bool,
-    is_detail_active: bool,
+    is_active: bool,
     render_body: impl FnOnce(&mut egui::Ui),
-) -> PartitionCardResponse {
-    let is_any_active = is_action_active || is_detail_active;
-    let card_bg = if is_any_active {
+) -> bool {
+    let card_bg = if is_active {
         if palette.is_dark {
             Color32::from_rgb(26, 42, 72)
         } else {
@@ -428,17 +414,14 @@ fn render_partition_card(
     } else {
         palette.card_bg
     };
-    let card_stroke = if is_any_active {
+    let card_stroke = if is_active {
         Stroke::new(2.0, palette.accent_blue)
     } else {
         Stroke::new(1.0, palette.card_border)
     };
 
-    let mut action_clicked = false;
-    let mut detail_clicked = false;
-
-    egui::Frame::new()
-        .inner_margin(egui::Margin::same(10))
+    let response = egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(12, 10))
         .corner_radius(CornerRadius::same(spacing::CARD_RADIUS))
         .fill(card_bg)
         .stroke(card_stroke)
@@ -451,96 +434,35 @@ fn render_partition_card(
                         .color(palette.text_primary),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (toggle_txt, toggle_color) = if is_active {
+                        ("▲ Thu gọn", palette.accent_blue)
+                    } else {
+                        ("▼ Chi tiết & Cài đặt", palette.text_secondary)
+                    };
                     ui.label(
-                        RichText::new(format!("{} thông số", param_count))
-                            .size(typography::BTN_NORMAL)
+                        RichText::new(format!("{} ({} mục)", toggle_txt, param_count))
+                            .size(typography::DETAIL_TEXT)
                             .strong()
-                            .color(palette.accent_blue),
+                            .color(toggle_color),
                     );
                 });
             });
-            ui.add_space(2.0);
+            ui.add_space(4.0);
 
             render_body(ui);
-
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-
-                // Nút 1: Hành động (Dọn dẹp + Cài đặt)
-                let act_txt = if is_action_active {
-                    "▲ Thu gọn"
-                } else {
-                    "⚡ Hành động ▾"
-                };
-                let act_fill = if is_action_active {
-                    palette.primary_btn
-                } else {
-                    palette.tab_inactive_bg
-                };
-                let act_fg = if is_action_active {
-                    Color32::WHITE
-                } else {
-                    palette.text_primary
-                };
-                let act_btn = egui::Button::new(
-                    RichText::new(act_txt)
-                        .size(typography::BTN_NORMAL)
-                        .strong()
-                        .color(act_fg),
-                )
-                .fill(act_fill)
-                .min_size(Vec2::new(w, spacing::CARD_ACTION_BTN_HEIGHT))
-                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
-
-                if ui
-                    .add(act_btn)
-                    .on_hover_text("Dọn dẹp nhanh và cài đặt chuyên sâu các thông số phân vùng")
-                    .clicked()
-                {
-                    action_clicked = true;
-                }
-
-                // Nút 2: Chi tiết (Thông tin, Rủi ro, Top 5)
-                let det_txt = if is_detail_active {
-                    "▲ Thu gọn"
-                } else {
-                    "🔍 Chi tiết ▾"
-                };
-                let det_fill = if is_detail_active {
-                    palette.accent_blue
-                } else {
-                    palette.tab_inactive_bg
-                };
-                let det_fg = if is_detail_active {
-                    Color32::WHITE
-                } else {
-                    palette.text_primary
-                };
-                let det_btn = egui::Button::new(
-                    RichText::new(det_txt)
-                        .size(typography::BTN_NORMAL)
-                        .strong()
-                        .color(det_fg),
-                )
-                .fill(det_fill)
-                .min_size(Vec2::new(w, spacing::CARD_ACTION_BTN_HEIGHT))
-                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
-
-                if ui
-                    .add(det_btn)
-                    .on_hover_text("Xem thông tin chuyên sâu, đánh giá rủi ro và Top 5 vấn đề gây tràn")
-                    .clicked()
-                {
-                    detail_clicked = true;
-                }
-            });
         });
 
-    PartitionCardResponse {
-        action_clicked,
-        detail_clicked,
+    let interact = ui.interact(
+        response.response.rect,
+        response.response.id.with(icon_title),
+        egui::Sense::click(),
+    );
+
+    if interact.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
+
+    interact.clicked()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -909,7 +831,6 @@ impl OptimizerApp {
             config,
             run_on_startup,
             selected_partition: None,
-            partition_view_mode: PartitionViewMode::Action,
         }
     }
 
@@ -1537,37 +1458,27 @@ impl OptimizerApp {
         // --- 4 PHÂN VÙNG TỐI ƯU HỆ THỐNG (CPU • RAM • PIN • DRIVE) ---
         ui.horizontal(|ui| {
             ui.label(RichText::new("4 PHÂN VÙNG TỐI ƯU HỆ THỐNG").size(typography::SECTION_TITLE).strong().color(p.accent_blue));
-            ui.label(RichText::new("(Bấm phân vùng để xem và tinh chỉnh thông số)").size(12.0).color(p.text_secondary));
+            ui.label(RichText::new("(Bấm vào phân vùng để xem chi tiết & tinh chỉnh)").size(12.0).color(p.text_secondary));
         });
         ui.add_space(2.0);
 
-        let total_junk: u64 = self.clean_categories.iter().map(|c| c.size_bytes).sum();
-
         // Row 1: CPU (Col 0) & RAM (Col 1)
-        let is_cpu_act = self.selected_partition == Some(PartitionTab::Cpu) && self.partition_view_mode == PartitionViewMode::Action;
-        let is_cpu_det = self.selected_partition == Some(PartitionTab::Cpu) && self.partition_view_mode == PartitionViewMode::Detail;
+        let is_cpu = self.selected_partition == Some(PartitionTab::Cpu);
+        let is_ram = self.selected_partition == Some(PartitionTab::Ram);
+        let is_pin = self.selected_partition == Some(PartitionTab::Pin);
+        let is_drv = self.selected_partition == Some(PartitionTab::Drive);
 
-        let is_ram_act = self.selected_partition == Some(PartitionTab::Ram) && self.partition_view_mode == PartitionViewMode::Action;
-        let is_ram_det = self.selected_partition == Some(PartitionTab::Ram) && self.partition_view_mode == PartitionViewMode::Detail;
-
-        let is_pin_act = self.selected_partition == Some(PartitionTab::Pin) && self.partition_view_mode == PartitionViewMode::Action;
-        let is_pin_det = self.selected_partition == Some(PartitionTab::Pin) && self.partition_view_mode == PartitionViewMode::Detail;
-
-        let is_drv_act = self.selected_partition == Some(PartitionTab::Drive) && self.partition_view_mode == PartitionViewMode::Action;
-        let is_drv_det = self.selected_partition == Some(PartitionTab::Drive) && self.partition_view_mode == PartitionViewMode::Detail;
-
-        let mut cpu_act = None;
-        let mut ram_act = None;
+        let mut cpu_clicked = false;
+        let mut ram_clicked = false;
 
         ui.columns(2, |cols| {
             // Card 1: CPU
-            cpu_act = Some(render_partition_card(
+            cpu_clicked = render_partition_card(
                 &mut cols[0],
                 &p,
                 "⚡ CPU",
                 17,
-                is_cpu_act,
-                is_cpu_det,
+                is_cpu,
                 |ui| {
                     let cpu = self.protection.cpu_usage;
                     let cpu_color = if cpu > 80.0 { p.danger_red } else { p.accent_blue };
@@ -1584,37 +1495,22 @@ impl OptimizerApp {
                             .replace("CPU", "")
                             .trim()
                             .chars()
-                            .take(16)
+                            .take(18)
                             .collect::<String>();
                         ui.label(RichText::new(display_cpu).size(typography::CHIP_TITLE).strong().color(p.text_primary));
                     });
 
                     render_mini_bar(ui, (cpu / 100.0) as f32, cpu_color, p.tab_inactive_bg);
-                    ui.add_space(4.0);
-
-                    let cur_cpu_mhz = self.sys.cpus().first().map(|c| c.frequency()).unwrap_or(self.autonomous.hardware_profile.cpu_base_mhz as u64) as u32;
-                    let full_cpu = self.autonomous.hardware_profile.cpu_brand
-                        .replace("(R)", "")
-                        .replace("(TM)", "")
-                        .replace("CPU", "")
-                        .trim()
-                        .to_string();
-
-                    ui.label(RichText::new(format!("• Vi xử lý: {}", full_cpu)).size(typography::CHIP_TITLE).strong().color(p.text_primary));
-                    ui.label(RichText::new(format!("• Cấu trúc: {} Nhân thực / {} Luồng", self.autonomous.hardware_profile.cpu_physical_cores, self.autonomous.hardware_profile.cpu_logical_cores)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                    ui.label(RichText::new(format!("• Xung nhịp: Cơ sở {} MHz • Hiện tại {} MHz", self.autonomous.hardware_profile.cpu_base_mhz, cur_cpu_mhz)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                    ui.label(RichText::new(format!("• Giới hạn Turbo: AC {}% | DC {}% (Sàn {}%)", self.cpu_limit_ac, self.cpu_limit_dc, self.cpu_min_state_pct)).size(typography::DETAIL_TEXT).color(p.text_secondary));
                 },
-            ));
+            );
 
             // Card 2: RAM
-            ram_act = Some(render_partition_card(
+            ram_clicked = render_partition_card(
                 &mut cols[1],
                 &p,
                 "🧠 RAM",
                 4,
-                is_ram_act,
-                is_ram_det,
+                is_ram,
                 |ui| {
                     let load = self.mem_stats.load_percent;
                     let ram_color = if load > 85 { p.danger_red } else { p.success_green };
@@ -1624,74 +1520,31 @@ impl OptimizerApp {
                     });
 
                     render_mini_bar(ui, (load as f32) / 100.0, ram_color, p.tab_inactive_bg);
-                    ui.add_space(4.0);
-
-                    let pf_used = self.mem_stats.pagefile_used_bytes;
-                    let pf_total = self.mem_stats.pagefile_total_bytes;
-                    ui.label(RichText::new(format!("• RAM vật lý: Dùng {} / {:.1} GB", format_bytes(self.mem_stats.used_bytes), self.autonomous.hardware_profile.ram_total_gb)).size(typography::CHIP_TITLE).strong().color(p.text_primary));
-                    ui.label(RichText::new(format!("• Khả dụng: {} trống ({:.0}%)", format_bytes(self.mem_stats.free_bytes), (100.0 - load as f32).max(0.0))).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                    if pf_total > 0 {
-                        ui.label(RichText::new(format!("• Bộ nhớ ảo (Pagefile): {} / {}", format_bytes(pf_used), format_bytes(pf_total))).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                    } else {
-                        ui.label(RichText::new(format!("• Nén RAM: {}", if self.memory_compression { "Đang bật (Giảm swap)" } else { "Tắt" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                    }
-                    ui.label(RichText::new(format!("• Auto Trim: Ngưỡng {}% • Nén RAM: {}", self.ram_trim_threshold_pct, if self.memory_compression { "Bật" } else { "Tắt" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
                 },
-            ));
+            );
         });
 
-        if let Some(act) = cpu_act {
-            if act.action_clicked {
-                if is_cpu_act {
-                    self.selected_partition = None;
-                } else {
-                    self.selected_partition = Some(PartitionTab::Cpu);
-                    self.partition_view_mode = PartitionViewMode::Action;
-                }
-            }
-            if act.detail_clicked {
-                if is_cpu_det {
-                    self.selected_partition = None;
-                } else {
-                    self.selected_partition = Some(PartitionTab::Cpu);
-                    self.partition_view_mode = PartitionViewMode::Detail;
-                }
-            }
+        if cpu_clicked {
+            self.selected_partition = if is_cpu { None } else { Some(PartitionTab::Cpu) };
         }
-        if let Some(act) = ram_act {
-            if act.action_clicked {
-                if is_ram_act {
-                    self.selected_partition = None;
-                } else {
-                    self.selected_partition = Some(PartitionTab::Ram);
-                    self.partition_view_mode = PartitionViewMode::Action;
-                }
-            }
-            if act.detail_clicked {
-                if is_ram_det {
-                    self.selected_partition = None;
-                } else {
-                    self.selected_partition = Some(PartitionTab::Ram);
-                    self.partition_view_mode = PartitionViewMode::Detail;
-                }
-            }
+        if ram_clicked {
+            self.selected_partition = if is_ram { None } else { Some(PartitionTab::Ram) };
         }
 
         ui.add_space(6.0);
 
         // Row 2: PIN (Col 0) & DRIVE (Col 1)
-        let mut pin_act = None;
-        let mut drv_act = None;
+        let mut pin_clicked = false;
+        let mut drv_clicked = false;
 
         ui.columns(2, |cols| {
             // Card 3: PIN
-            pin_act = Some(render_partition_card(
+            pin_clicked = render_partition_card(
                 &mut cols[0],
                 &p,
                 "🔋 PIN / NGUỒN",
                 6,
-                is_pin_act,
-                is_pin_det,
+                is_pin,
                 |ui| {
                     if self.power_status.has_battery {
                         let bat = self.power_status.battery_percent;
@@ -1716,63 +1569,23 @@ impl OptimizerApp {
                         });
 
                         render_mini_bar(ui, (bat as f32) / 100.0, bat_color, p.tab_inactive_bg);
-                        ui.add_space(4.0);
-
-                        let num_bats = self.dual_batteries.len();
-                        if num_bats >= 2 {
-                            let b1 = &self.dual_batteries[0];
-                            let b2 = &self.dual_batteries[1];
-                            let tot_design = (b1.design_capacity_mwh + b2.design_capacity_mwh) as f32 / 1000.0;
-                            let tot_full = (b1.full_charge_capacity_mwh + b2.full_charge_capacity_mwh) as f32 / 1000.0;
-                            let avg_wear = if tot_design > 0.0 {
-                                ((1.0 - (tot_full / tot_design)) * 100.0).clamp(0.0, 100.0)
-                            } else {
-                                0.0
-                            };
-                            ui.label(RichText::new(format!("• Số lượng: 2 pin (Pin kép) • Chai TB: {:.1}%", avg_wear)).size(typography::CHIP_TITLE).strong().color(p.text_primary));
-                            ui.label(RichText::new(format!("• Pin 1 ({}): Chai {:.1}% • {} chu kỳ ({}%)", b1.id, b1.wear_percent, b1.cycle_count, b1.current_charge_percent)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                            ui.label(RichText::new(format!("• Pin 2 ({}): Chai {:.1}% • {} chu kỳ ({}%)", b2.id, b2.wear_percent, b2.cycle_count, b2.current_charge_percent)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                            ui.label(RichText::new(format!("• Dung lượng: {:.1} Wh sạc đầy / {:.1} Wh gốc", tot_full, tot_design)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                        } else if num_bats == 1 {
-                            let b = &self.dual_batteries[0];
-                            let health = (100.0 - b.wear_percent).clamp(0.0, 100.0);
-                            let full_wh = b.full_charge_capacity_mwh as f32 / 1000.0;
-                            let design_wh = b.design_capacity_mwh as f32 / 1000.0;
-                            ui.label(RichText::new(format!("• Số lượng: 1 pin ({})", b.id)).size(typography::CHIP_TITLE).strong().color(p.text_primary));
-                            ui.label(RichText::new(format!("• Mức độ chai: {:.1}% (Độ khỏe pin: {:.1}%)", b.wear_percent, health)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                            ui.label(RichText::new(format!("• Chu kỳ sạc: {} lần • {:.1} / {:.1} Wh", b.cycle_count, full_wh, design_wh)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                            let bat_care_str = if self.protection.battery_threshold_enabled { "Khóa 80% (Bảo vệ pin)" } else { "100% Sạc đầy" };
-                            ui.label(RichText::new(format!("• Ngưỡng sạc: {}", bat_care_str)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                        } else {
-                            ui.label(RichText::new("• Số lượng: 1 pin (Đang nhận diện mức chai...)").size(typography::CHIP_TITLE).strong().color(p.text_primary));
-                            ui.label(RichText::new(format!("• Trạng thái: {}", if self.power_status.is_ac_online { "Đang cắm nguồn AC" } else { "Đang dùng pin" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                            let bat_care_str = if self.protection.battery_threshold_enabled { "Khóa 80% (Bảo vệ pin)" } else { "100% Sạc đầy" };
-                            ui.label(RichText::new(format!("• Chế độ sạc: {}", bat_care_str)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                            ui.label(RichText::new(format!("• Quạt làm mát: {}", if self.cooling_active { "Active" } else { "Passive (0dB)" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                        }
                     } else {
                         ui.horizontal(|ui| {
                             ui.heading(RichText::new("Nguồn AC").size(typography::STAT_VALUE).strong().color(p.accent_blue));
                             ui.label(RichText::new("PC để bàn • 220V").size(typography::CHIP_TITLE).strong().color(p.text_primary));
                         });
                         render_mini_bar(ui, 1.0, p.accent_blue, p.tab_inactive_bg);
-                        ui.add_space(4.0);
-                        ui.label(RichText::new("• Số lượng pin: 0 (Nguồn AC trực tiếp)").size(typography::CHIP_TITLE).strong().color(p.text_primary));
-                        ui.label(RichText::new("• Mức chai: Không áp dụng (PC không pin)").size(typography::DETAIL_TEXT).color(p.text_secondary));
-                        ui.label(RichText::new("• Cung cấp điện: Nguồn AC trực tiếp 220V").size(typography::DETAIL_TEXT).color(p.text_secondary));
-                        ui.label(RichText::new(format!("• Quạt tản nhiệt: {}", if self.cooling_active { "Active (Làm mát tối đa)" } else { "Passive (0dB)" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
                     }
                 },
-            ));
+            );
 
             // Card 4: DRIVE
-            drv_act = Some(render_partition_card(
+            drv_clicked = render_partition_card(
                 &mut cols[1],
                 &p,
                 "💾 Ổ ĐĨA / DRIVE",
                 6,
-                is_drv_act,
-                is_drv_det,
+                is_drv,
                 |ui| {
                     let drv_type = if self.autonomous.hardware_profile.is_ssd { "SSD Siêu tốc" } else { "HDD Cơ học" };
                     let d_total = self.autonomous.hardware_profile.disk_total_bytes;
@@ -1787,64 +1600,21 @@ impl OptimizerApp {
                     });
 
                     render_mini_bar(ui, frac, p.accent_blue, p.tab_inactive_bg);
-                    ui.add_space(4.0);
-
-                    let clean_disk = self.autonomous.hardware_profile.disk_name.chars().take(24).collect::<String>();
-                    ui.label(RichText::new(format!("• Thiết bị: {}", clean_disk)).size(typography::CHIP_TITLE).strong().color(p.text_primary));
-                    if d_total > 0 {
-                        ui.label(RichText::new(format!("• Dung lượng: Dùng {} / Trống {}", format_bytes(d_used), format_bytes(d_avail))).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                    }
-                    let trim_str = if self.trim_enabled { "Bật" } else { "Tắt" };
-                    ui.label(RichText::new(format!("• Định dạng: {} • SSD TRIM: {}", self.autonomous.hardware_profile.disk_fs, trim_str)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                    ui.label(RichText::new(format!("• Rác hệ thống: {} (Quét 3 tầng)", format_bytes(total_junk))).size(typography::DETAIL_TEXT).color(p.text_secondary));
                 },
-            ));
+            );
         });
 
-        if let Some(act) = pin_act {
-            if act.action_clicked {
-                if is_pin_act {
-                    self.selected_partition = None;
-                } else {
-                    self.selected_partition = Some(PartitionTab::Pin);
-                    self.partition_view_mode = PartitionViewMode::Action;
-                }
-            }
-            if act.detail_clicked {
-                if is_pin_det {
-                    self.selected_partition = None;
-                } else {
-                    self.selected_partition = Some(PartitionTab::Pin);
-                    self.partition_view_mode = PartitionViewMode::Detail;
-                }
-            }
+        if pin_clicked {
+            self.selected_partition = if is_pin { None } else { Some(PartitionTab::Pin) };
         }
-        if let Some(act) = drv_act {
-            if act.action_clicked {
-                if is_drv_act {
-                    self.selected_partition = None;
-                } else {
-                    self.selected_partition = Some(PartitionTab::Drive);
-                    self.partition_view_mode = PartitionViewMode::Action;
-                }
-            }
-            if act.detail_clicked {
-                if is_drv_det {
-                    self.selected_partition = None;
-                } else {
-                    self.selected_partition = Some(PartitionTab::Drive);
-                    self.partition_view_mode = PartitionViewMode::Detail;
-                }
-            }
+        if drv_clicked {
+            self.selected_partition = if is_drv { None } else { Some(PartitionTab::Drive) };
         }
 
-        // --- EXPANDABLE ACTION / DETAIL CARD FOR SELECTED PARTITION ---
+        // --- EXPANDABLE UNIFIED CARD FOR SELECTED PARTITION ---
         if let Some(active) = self.selected_partition {
             ui.add_space(8.0);
-            match self.partition_view_mode {
-                PartitionViewMode::Action => self.render_partition_action_view(ui, active),
-                PartitionViewMode::Detail => self.render_partition_detail_view(ui, active),
-            }
+            self.render_partition_unified_view(ui, active);
         }
 
         ui.add_space(8.0);
@@ -1941,9 +1711,9 @@ impl OptimizerApp {
     }
 
     // =========================================================================
-    // PHÂN VÙNG: GIAO DIỆN HÀNH ĐỘNG (DỌN DẸP & CÀI ĐẶT CHUYÊN SÂU)
+    // PHÂN VÙNG: GIAO DIỆN HỢP NHẤT (CHI TIẾT • RỦI RO • TOP 5 • HÀNH ĐỘNG • SETUP)
     // =========================================================================
-    fn render_partition_action_view(&mut self, ui: &mut egui::Ui, active: PartitionTab) {
+    fn render_partition_unified_view(&mut self, ui: &mut egui::Ui, active: PartitionTab) {
         let p = self.palette;
         p.modern_card(ui, |ui| {
             let (part_icon, part_title, count, clean_btn_txt, clean_tooltip) = match active {
@@ -1979,7 +1749,7 @@ impl OptimizerApp {
 
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(format!("{} HÀNH ĐỘNG & CÀI ĐẶT: {} ({} THÔNG SỐ)", part_icon, part_title, count))
+                    RichText::new(format!("{} CHI TIẾT & HÀNH ĐỘNG: {} ({} THÔNG SỐ)", part_icon, part_title, count))
                         .size(typography::SECTION_TITLE)
                         .strong()
                         .color(p.accent_blue),
@@ -2019,13 +1789,27 @@ impl OptimizerApp {
             }
 
             ui.add_space(8.0);
+
+            // 1. Phân tích chi tiết: Thông tin phần cứng + Đánh giá rủi ro + Top 5 tác nhân
+            match active {
+                PartitionTab::Cpu => self.render_cpu_detail(ui),
+                PartitionTab::Ram => self.render_ram_detail(ui),
+                PartitionTab::Pin => self.render_pin_detail(ui),
+                PartitionTab::Drive => self.render_drive_detail(ui),
+            }
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // 2. Ma trận tinh chỉnh thông số chuyên sâu
             ui.label(
-                RichText::new("⚙ TINH CHỈNH THÔNG SỐ CHUYÊN SÂU PHÂN VÙNG:")
+                RichText::new(format!("⚙ MA TRẬN {} CÀI ĐẶT CHUYÊN SÂU PHÂN VÙNG:", count))
                     .size(typography::CHIP_TITLE)
                     .strong()
                     .color(p.text_primary),
             );
-            ui.add_space(2.0);
+            ui.add_space(4.0);
 
             match active {
                 PartitionTab::Cpu => self.render_cpu_partition_settings(ui),
@@ -2051,44 +1835,6 @@ impl OptimizerApp {
                     self.apply_all_criteria();
                 }
             });
-        });
-    }
-
-    // =========================================================================
-    // PHÂN VÙNG: GIAO DIỆN CHI TIẾT (THÔNG TIN • RỦI RO • TOP 5 GÂY TRÀN)
-    // =========================================================================
-    fn render_partition_detail_view(&mut self, ui: &mut egui::Ui, active: PartitionTab) {
-        let p = self.palette;
-        p.modern_card(ui, |ui| {
-            let (part_icon, part_title) = match active {
-                PartitionTab::Cpu => ("⚡", "PHÂN TÍCH CHI TIẾT: CPU & TIẾN TRÌNH"),
-                PartitionTab::Ram => ("🧠", "PHÂN TÍCH CHI TIẾT: BỘ NHỚ RAM & SWAP"),
-                PartitionTab::Pin => ("🔋", "PHÂN TÍCH CHI TIẾT: PIN, NGUỒN & NHIỆT"),
-                PartitionTab::Drive => ("💾", "PHÂN TÍCH CHI TIẾT: Ổ ĐĨA & RÁC TRÀN"),
-            };
-
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!("{} {}", part_icon, part_title))
-                        .size(typography::SECTION_TITLE)
-                        .strong()
-                        .color(p.accent_blue),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(RichText::new("✕ Đóng").size(typography::BTN_NORMAL).strong()).clicked() {
-                        self.selected_partition = None;
-                    }
-                });
-            });
-            ui.separator();
-            ui.add_space(4.0);
-
-            match active {
-                PartitionTab::Cpu => self.render_cpu_detail(ui),
-                PartitionTab::Ram => self.render_ram_detail(ui),
-                PartitionTab::Pin => self.render_pin_detail(ui),
-                PartitionTab::Drive => self.render_drive_detail(ui),
-            }
         });
     }
 

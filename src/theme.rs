@@ -22,6 +22,7 @@ pub mod spacing {
 
     pub const SWITCH_SIZE: Vec2 = Vec2::new(78.0, 26.0);
     pub const HERO_BTN_HEIGHT: f32 = 42.0;
+    #[allow(dead_code)]
     pub const CARD_ACTION_BTN_HEIGHT: f32 = 32.0;
     pub const MASTER_APPLY_BTN_HEIGHT: f32 = 36.0;
     pub const MINI_BAR_HEIGHT: f32 = 5.0;
