@@ -1103,6 +1103,16 @@ impl OptimizerApp {
     }
 
     fn run_quick_optimize(&mut self) {
+        // 1. Áp dụng toàn bộ 33 thông số tối ưu phần cứng & Windows
+        self.apply_all_criteria();
+        self.autonomous.set_operating_mode(
+            OperatingMode::HardwareOptimal,
+            &mut self.sys,
+            self.power_status.is_ac_online,
+            self.power_status.battery_percent,
+        );
+
+        // 2. Dọn dẹp tệp rác Tầng 1 an toàn
         let targets = get_default_targets();
         let mut freed_junk = 0u64;
         let mut deleted_files = 0usize;
@@ -1122,14 +1132,10 @@ impl OptimizerApp {
             }
         }
 
+        // 3. Thu hồi bộ nhớ Working Set RAM
         let (freed_ram, count) = trim_working_sets(&mut self.sys);
 
-        // Áp dụng tối ưu phần cứng động (không hardcode)
-        let _ = self.autonomous.hardware_profile.apply_hardware_optimal(
-            self.power_status.is_ac_online,
-            self.power_status.battery_percent,
-        );
-
+        // 4. Ưu tiên CPU app Focus và ép EcoQoS app ngầm
         let (_, eco_count) = apply_foreground_boost_and_eco(
             &self.sys,
             self.foreground_info.as_ref().map(|(pid, _)| *pid),
@@ -1139,7 +1145,7 @@ impl OptimizerApp {
         self.top_processes = get_top_processes(&mut self.sys, 25);
 
         let msg = format!(
-            "Dọn {} rác ({} files), thu hồi {} RAM từ {} app, tối ưu phần cứng ({} nhân, SSD: {}), ép EcoQoS {} app nền.",
+            "Dọn {} rác ({} tệp), thu hồi {} RAM ({} app), tối ưu phần cứng ({} nhân, SSD: {}), ép EcoQoS {} app nền.",
             format_bytes(freed_junk),
             deleted_files,
             format_bytes(freed_ram),
@@ -1149,7 +1155,7 @@ impl OptimizerApp {
             eco_count
         );
         self.quick_opt_msg = format!("✓ {}", msg);
-        self.autonomous.log("[TỐI ƯU]", format!("Tối ưu tức thì: {}", msg));
+        self.autonomous.log("[TỐI ƯU TOÀN DIỆN]", format!("Đã tối ưu toàn bộ hệ thống: {}", msg));
     }
 
     fn clean_cpu_partition(&mut self) {
@@ -1626,55 +1632,6 @@ impl OptimizerApp {
             ui.add_space(8.0);
             self.render_partition_unified_view(ui, active);
         }
-
-        ui.add_space(8.0);
-
-        // --- CHẾ ĐỘ TỐI ƯU HỆ THỐNG & AUTONOMOUS MODES ---
-        p.modern_card(ui, |ui| {
-            ui.label(RichText::new("CHẾ ĐỘ TỐI ƯU HỆ THỐNG").size(13.0).strong().color(p.accent_blue));
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                let is_hw = self.autonomous.operating_mode == OperatingMode::HardwareOptimal;
-                let hw_btn = egui::Button::new(
-                    RichText::new(if is_hw { "● 1. Tối ưu Phần Cứng & OS (Chuẩn máy)" } else { "○ 1. Tối ưu Phần Cứng & OS" })
-                        .size(12.5)
-                        .strong()
-                        .color(if is_hw { Color32::WHITE } else { p.text_primary }),
-                )
-                .fill(if is_hw { p.primary_btn } else { p.tab_inactive_bg })
-                .corner_radius(CornerRadius::same(6));
-
-                if ui.add(hw_btn).clicked() {
-                    self.autonomous.set_operating_mode(
-                        OperatingMode::HardwareOptimal,
-                        &mut self.sys,
-                        self.power_status.is_ac_online,
-                        self.power_status.battery_percent,
-                    );
-                    self.sync_config();
-                }
-
-                let is_wl = self.autonomous.operating_mode == OperatingMode::WorkloadAdaptive;
-                let wl_btn = egui::Button::new(
-                    RichText::new(if is_wl { "● 2. Tự Động Theo Tác Vụ (Auto-Pilot)" } else { "○ 2. Tự Động Theo Tác Vụ" })
-                        .size(12.5)
-                        .strong()
-                        .color(if is_wl { Color32::WHITE } else { p.text_primary }),
-                )
-                .fill(if is_wl { p.accent_blue } else { p.tab_inactive_bg })
-                .corner_radius(CornerRadius::same(6));
-
-                if ui.add(wl_btn).clicked() {
-                    self.autonomous.set_operating_mode(
-                        OperatingMode::WorkloadAdaptive,
-                        &mut self.sys,
-                        self.power_status.is_ac_online,
-                        self.power_status.battery_percent,
-                    );
-                    self.sync_config();
-                }
-            });
-        });
 
         ui.add_space(8.0);
 
