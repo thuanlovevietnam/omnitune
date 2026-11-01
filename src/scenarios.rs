@@ -12,10 +12,13 @@ use windows_sys::Win32::System::Threading::{
 };
 use crate::hardware_profile::HardwareProfile;
 
+use serde::{Deserialize, Serialize};
+
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Scenario {
+    #[default]
     Default,
     Developer,
     Gaming,

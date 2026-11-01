@@ -63,15 +63,22 @@ pub struct AutonomousEngine {
 }
 
 impl AutonomousEngine {
-    pub fn new(hw: HardwareProfile, mode: OperatingMode) -> Self {
+    pub fn new(
+        hw: HardwareProfile,
+        mode: OperatingMode,
+        saved_scenario: Scenario,
+        auto_pilot_enabled: bool,
+        eco_qos_enabled: bool,
+        auto_ram_enabled: bool,
+    ) -> Self {
         let mut engine = Self {
             activity_log: Vec::new(),
-            current_scenario: Scenario::Default,
+            current_scenario: saved_scenario,
             last_power_ac: None,
             last_foreground_pid: None,
-            auto_pilot_enabled: true,
-            eco_qos_enabled: true,
-            auto_ram_enabled: true,
+            auto_pilot_enabled,
+            eco_qos_enabled,
+            auto_ram_enabled,
             last_ram_trim: Instant::now(),
             hardware_profile: hw,
             operating_mode: mode,
@@ -80,11 +87,11 @@ impl AutonomousEngine {
         engine.log(
             "[START]",
             format!(
-                "Hệ thống khởi động: OS {} • CPU {} nhân • RAM {:.1}GB • GPU [{}].",
+                "Khởi động: Chế độ [{}] • Ngữ cảnh [{}] • OS {} • CPU {} nhân.",
+                engine.operating_mode.short_name(),
+                engine.current_scenario.name(),
                 engine.hardware_profile.os_name,
-                engine.hardware_profile.cpu_logical_cores,
-                engine.hardware_profile.ram_total_gb,
-                engine.hardware_profile.gpu_name
+                engine.hardware_profile.cpu_logical_cores
             ),
         );
         engine
@@ -140,18 +147,35 @@ impl AutonomousEngine {
         }
     }
 
+    pub fn set_manual_scenario(
+        &mut self,
+        scenario: Scenario,
+        sys: &mut System,
+        is_ac: bool,
+        battery_pct: u8,
+    ) {
+        self.current_scenario = scenario;
+        let msg = apply_scenario(scenario, sys, &self.hardware_profile, is_ac, battery_pct);
+        self.log(
+            "[CHỌN]",
+            format!("Người dùng chọn kịch bản [{}]: {}", scenario.name(), msg),
+        );
+    }
+
     pub fn tick(
         &mut self,
         sys: &mut System,
         is_ac: bool,
         battery_pct: u8,
         ram_load_pct: u32,
-    ) {
+    ) -> bool {
+        let mut state_changed = false;
         let idle_ms = get_user_idle_ms();
 
         // 1. Cảm biến nguồn điện (AC/DC Transition Sensor)
         if let Some(prev_ac) = self.last_power_ac {
             if prev_ac != is_ac {
+                state_changed = true;
                 if self.operating_mode == OperatingMode::HardwareOptimal {
                     let msgs = self.hardware_profile.apply_hardware_optimal(is_ac, battery_pct);
                     for m in msgs {
@@ -221,6 +245,7 @@ impl AutonomousEngine {
                 if let Some(target_scen) = detect_recommended_scenario(sys, is_ac, battery_pct, idle_ms) {
                     if target_scen != self.current_scenario {
                         self.current_scenario = target_scen;
+                        state_changed = true;
                         let msg = apply_scenario(
                             target_scen,
                             sys,
@@ -241,6 +266,7 @@ impl AutonomousEngine {
             && self.current_scenario != Scenario::IdlePowerSave
         {
             self.current_scenario = Scenario::IdlePowerSave;
+            state_changed = true;
             let msg = apply_scenario(
                 Scenario::IdlePowerSave,
                 sys,
@@ -272,5 +298,7 @@ impl AutonomousEngine {
                 );
             }
         }
+
+        state_changed
     }
 }

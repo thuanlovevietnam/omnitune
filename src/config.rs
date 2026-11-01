@@ -1,4 +1,5 @@
 use crate::autonomous_engine::OperatingMode;
+use crate::scenarios::Scenario;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use windows_sys::Win32::System::Registry::{
@@ -8,6 +9,14 @@ use windows_sys::Win32::System::Registry::{
 
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_brightness() -> u32 {
+    80
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +33,14 @@ pub struct AppConfig {
     pub run_on_startup: bool,
     #[serde(default)]
     pub operating_mode: OperatingMode,
+    #[serde(default)]
+    pub saved_scenario: Scenario,
+    #[serde(default = "default_true")]
+    pub eco_qos_enabled: bool,
+    #[serde(default = "default_true")]
+    pub auto_ram_enabled: bool,
+    #[serde(default = "default_brightness")]
+    pub brightness_level: u32,
 }
 
 impl Default for AppConfig {
@@ -40,6 +57,10 @@ impl Default for AppConfig {
             minimize_to_tray: false,
             run_on_startup: false,
             operating_mode: OperatingMode::WorkloadAdaptive,
+            saved_scenario: Scenario::Default,
+            eco_qos_enabled: true,
+            auto_ram_enabled: true,
+            brightness_level: 80,
         }
     }
 }

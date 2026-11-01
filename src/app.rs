@@ -147,6 +147,9 @@ impl OptimizerApp {
         if config.battery_threshold_80 {
             let _ = set_battery_threshold(true, 80);
         }
+        if config.brightness_level > 0 {
+            let _ = set_brightness(config.brightness_level);
+        }
 
         // Apply permanent OS responsiveness tweaks
         crate::power::apply_permanent_windows_system_tweaks();
@@ -233,8 +236,49 @@ impl OptimizerApp {
         });
 
         let hw = crate::hardware_profile::HardwareProfile::detect(&mut sys);
-        let mut autonomous = AutonomousEngine::new(hw, config.operating_mode);
-        autonomous.auto_pilot_enabled = config.auto_pilot_enabled;
+        let mut autonomous = AutonomousEngine::new(
+            hw.clone(),
+            config.operating_mode,
+            config.saved_scenario,
+            config.auto_pilot_enabled,
+            config.eco_qos_enabled,
+            config.auto_ram_enabled,
+        );
+
+        // Khôi phục & thực thi ngay cấu hình chế độ đã lưu
+        match config.operating_mode {
+            OperatingMode::HardwareOptimal => {
+                let msgs = hw.apply_hardware_optimal(power_status.is_ac_online, power_status.battery_percent);
+                autonomous.log(
+                    "[KHÔI PHỤC]",
+                    format!(
+                        "Đã khôi phục Chế độ Tối ưu Phần Cứng & OS ({} nhân, {:.1}GB RAM, SSD: {}).",
+                        hw.cpu_logical_cores, hw.ram_total_gb, hw.is_ssd
+                    ),
+                );
+                for m in msgs {
+                    autonomous.log("[ÁP DỤNG]", m);
+                }
+            }
+            OperatingMode::WorkloadAdaptive => {
+                let msg = crate::scenarios::apply_scenario(
+                    config.saved_scenario,
+                    &mut sys,
+                    &hw,
+                    power_status.is_ac_online,
+                    power_status.battery_percent,
+                );
+                autonomous.log(
+                    "[KHÔI PHỤC]",
+                    format!(
+                        "Đã khôi phục Kịch bản Công việc [{}]: {}",
+                        config.saved_scenario.name(),
+                        msg
+                    ),
+                );
+            }
+        }
+
         autonomous.log(
             "[TỐC ĐỘ]",
             format!("Mở app tức thì trong {:.1} ms. Đang quét hệ thống ngầm...", t0.elapsed().as_secs_f64() * 1000.0),
@@ -265,7 +309,7 @@ impl OptimizerApp {
             keep_awake_mode: config.keep_awake_mode,
             cooling_active: config.cooling_active,
             gamedvr_enabled: config.gamedvr_enabled,
-            brightness_level: 80,
+            brightness_level: config.brightness_level,
             license,
             show_license_modal: false,
             input_license_email: String::new(),
@@ -293,6 +337,10 @@ impl OptimizerApp {
         self.config.gamedvr_enabled = self.gamedvr_enabled;
         self.config.auto_pilot_enabled = self.autonomous.auto_pilot_enabled;
         self.config.operating_mode = self.autonomous.operating_mode;
+        self.config.saved_scenario = self.autonomous.current_scenario;
+        self.config.eco_qos_enabled = self.autonomous.eco_qos_enabled;
+        self.config.auto_ram_enabled = self.autonomous.auto_ram_enabled;
+        self.config.brightness_level = self.brightness_level;
         self.config.battery_threshold_80 = self.protection.battery_threshold_enabled;
         self.config.run_on_startup = self.run_on_startup;
         save_config(&self.config);
@@ -434,13 +482,16 @@ impl OptimizerApp {
             self.mem_stats = get_memory_stats();
             self.power_status = get_power_status();
 
-            // Run autonomous engine tick
-            self.autonomous.tick(
+            // Run autonomous engine tick and persist if state changed
+            let state_changed = self.autonomous.tick(
                 &mut self.sys,
                 self.power_status.is_ac_online,
                 self.power_status.battery_percent,
                 self.mem_stats.load_percent,
             );
+            if state_changed {
+                self.sync_config();
+            }
 
             // Periodic ACPI battery poll (every 10s) running in background without UI freezing
             if self.power_status.has_battery
@@ -808,6 +859,22 @@ impl OptimizerApp {
                                         self.autonomous.hardware_profile.gpu_name
                                     )).size(10.5).color(p.text_secondary));
                                 });
+                                ui.add_space(4.0);
+                                let reapply_btn = egui::Button::new(
+                                    RichText::new("⚡ ÁP DỤNG LẠI CẤU HÌNH PHẦN CỨNG").size(10.5).strong().color(Color32::WHITE)
+                                )
+                                .fill(p.primary_btn)
+                                .corner_radius(CornerRadius::same(4));
+                                if ui.add(reapply_btn).on_hover_text("Thực thi lại cấu hình tối ưu sâu theo phần cứng của máy").clicked() {
+                                    let msgs = self.autonomous.hardware_profile.apply_hardware_optimal(
+                                        self.power_status.is_ac_online,
+                                        self.power_status.battery_percent,
+                                    );
+                                    for m in msgs {
+                                        self.autonomous.log("[ÁP DỤNG]", m);
+                                    }
+                                    self.sync_config();
+                                }
                             });
                         });
                 } else {
@@ -829,9 +896,46 @@ impl OptimizerApp {
                         .corner_radius(CornerRadius::same(6))
                         .inner_margin(egui::Margin::symmetric(10, 6))
                         .show(ui, |ui| {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new(context_tag).size(11.5).strong().color(p.accent_blue));
-                                ui.label(RichText::new(&context_name).size(11.5).strong().color(p.text_primary));
+                            ui.vertical(|ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(RichText::new(context_tag).size(11.5).strong().color(p.accent_blue));
+                                    ui.label(RichText::new(&context_name).size(11.5).strong().color(p.text_primary));
+                                });
+                                ui.add_space(4.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(RichText::new("Chuyển nhanh:").size(10.5).color(p.text_secondary));
+                                    let scenarios = [
+                                        (Scenario::Developer, "Dev"),
+                                        (Scenario::Gaming, "Game"),
+                                        (Scenario::OfficeMeeting, "Họp"),
+                                        (Scenario::RemoteDesktop, "Remote"),
+                                        (Scenario::MediaChill, "Phim"),
+                                        (Scenario::CafeMobility, "Pin"),
+                                        (Scenario::Default, "Cân bằng"),
+                                    ];
+                                    for (s, lbl) in scenarios {
+                                        let is_active = self.autonomous.current_scenario == s;
+                                        let btn = egui::Button::new(
+                                            RichText::new(lbl)
+                                                .size(10.0)
+                                                .strong()
+                                                .color(if is_active { Color32::WHITE } else { p.text_primary }),
+                                        )
+                                        .fill(if is_active { p.primary_btn } else { p.card_bg })
+                                        .stroke(Stroke::new(1.0, if is_active { p.primary_btn } else { p.card_border }))
+                                        .corner_radius(CornerRadius::same(4));
+
+                                        if ui.add(btn).clicked() {
+                                            self.autonomous.set_manual_scenario(
+                                                s,
+                                                &mut self.sys,
+                                                self.power_status.is_ac_online,
+                                                self.power_status.battery_percent,
+                                            );
+                                            self.sync_config();
+                                        }
+                                    }
+                                });
                             });
                         });
                 }
@@ -970,10 +1074,12 @@ impl OptimizerApp {
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.checkbox(
+                    if ui.checkbox(
                         &mut self.autonomous.eco_qos_enabled,
                         RichText::new("EcoQoS Bật").size(11.5).strong().color(p.accent_blue),
-                    );
+                    ).changed() {
+                        self.sync_config();
+                    }
                 });
             });
         });
@@ -990,10 +1096,19 @@ impl OptimizerApp {
                         .color(p.accent_blue),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.checkbox(
+                    if ui.checkbox(
                         &mut self.autonomous.auto_pilot_enabled,
                         RichText::new("Auto-Pilot").size(11.0).strong().color(p.success_green),
-                    );
+                    ).changed() {
+                        self.sync_config();
+                    }
+                    ui.add_space(6.0);
+                    if ui.checkbox(
+                        &mut self.autonomous.auto_ram_enabled,
+                        RichText::new("Auto-RAM").size(11.0).strong().color(p.accent_blue),
+                    ).changed() {
+                        self.sync_config();
+                    }
                 });
             });
             ui.separator();
@@ -1174,14 +1289,17 @@ impl OptimizerApp {
                         ui.horizontal(|ui| {
                             if ui.add(egui::Slider::new(&mut self.brightness_level, 10..=100).suffix("%")).changed() {
                                 let _ = set_brightness(self.brightness_level);
+                                self.sync_config();
                             }
                             if ui.button(RichText::new("45% Pin").size(10.0)).clicked() {
                                 self.brightness_level = 45;
                                 let _ = set_brightness(45);
+                                self.sync_config();
                             }
                             if ui.button(RichText::new("70% Phim").size(10.0)).clicked() {
                                 self.brightness_level = 70;
                                 let _ = set_brightness(70);
+                                self.sync_config();
                             }
                         });
                         ui.label(RichText::new("💡 Cà phê/Pin: 40-45% tối ưu nhất; Văn phòng: 50%; Phim: 70%.").size(10.5).color(p.text_secondary));
