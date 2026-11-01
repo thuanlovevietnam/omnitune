@@ -1411,45 +1411,73 @@ impl OptimizerApp {
         // --- HEALTH & HERO ACTION CARD ---
         let (score, score_label, score_color, tips) = self.calculate_health_score();
         p.modern_card(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.label(RichText::new("CHỈ SỐ SỨC KHỎE").size(13.0).strong().color(p.text_secondary));
-                ui.add_space(2.0);
-                ui.heading(
-                    RichText::new(format!("{}/100", score))
-                        .size(typography::HERO_SCORE)
-                        .strong()
-                        .color(score_color),
-                );
-                ui.label(RichText::new(score_label).size(typography::BTN_LARGE).strong().color(score_color));
-
-                ui.add_space(6.0);
-
-                // Smart Diagnostic Tip (Wrapped)
-                if let Some(tip) = tips.first() {
-                    ui.label(RichText::new(format!("💡 {}", tip)).size(typography::BODY_TEXT).color(p.text_secondary));
-                }
-
-                ui.add_space(8.0);
-
-                // Hero Action Button
-                let opt_btn = egui::Button::new(
-                    RichText::new("► TỐI ƯU HÓA TOÀN DIỆN (1-CLICK)")
-                        .size(typography::BTN_LARGE)
-                        .strong()
-                        .color(Color32::WHITE),
-                )
-                .fill(p.primary_btn)
-                .min_size(Vec2::new(ui.available_width() - 20.0, spacing::HERO_BTN_HEIGHT))
-                .corner_radius(CornerRadius::same(spacing::CARD_RADIUS));
-
-                if ui.add(opt_btn).clicked() {
-                    self.run_quick_optimize();
-                }
-
-                if !self.quick_opt_msg.is_empty() {
+            ui.columns(2, |cols| {
+                // Cột 1: Mô tả và nút click (Center)
+                cols[0].vertical_centered(|ui| {
                     ui.add_space(4.0);
-                    ui.label(RichText::new(&self.quick_opt_msg).size(typography::BODY_TEXT).color(p.success_green).strong());
-                }
+                    if let Some(tip) = tips.first() {
+                        ui.label(
+                            RichText::new(format!("💡 {}", tip))
+                                .size(typography::BODY_TEXT)
+                                .color(p.text_secondary),
+                        );
+                    } else {
+                        ui.label(
+                            RichText::new("💡 Hệ thống đang ở trạng thái tối ưu")
+                                .size(typography::BODY_TEXT)
+                                .color(p.text_secondary),
+                        );
+                    }
+
+                    ui.add_space(8.0);
+
+                    let opt_btn = egui::Button::new(
+                        RichText::new("► TỐI ƯU HÓA TOÀN DIỆN (1-CLICK)")
+                            .size(typography::BTN_NORMAL)
+                            .strong()
+                            .color(Color32::WHITE),
+                    )
+                    .fill(p.primary_btn)
+                    .min_size(Vec2::new(ui.available_width() - 10.0, spacing::HERO_BTN_HEIGHT))
+                    .corner_radius(CornerRadius::same(spacing::CARD_RADIUS));
+
+                    if ui.add(opt_btn).clicked() {
+                        self.run_quick_optimize();
+                    }
+
+                    if !self.quick_opt_msg.is_empty() {
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(&self.quick_opt_msg)
+                                .size(typography::BODY_TEXT)
+                                .color(p.success_green)
+                                .strong(),
+                        );
+                    }
+                });
+
+                // Cột 2: Chỉ số sức khỏe (Center)
+                cols[1].vertical_centered(|ui| {
+                    ui.label(
+                        RichText::new("CHỈ SỐ SỨC KHỎE")
+                            .size(13.0)
+                            .strong()
+                            .color(p.text_secondary),
+                    );
+                    ui.add_space(2.0);
+                    ui.heading(
+                        RichText::new(format!("{}/100", score))
+                            .size(typography::HERO_SCORE)
+                            .strong()
+                            .color(score_color),
+                    );
+                    ui.label(
+                        RichText::new(score_label)
+                            .size(typography::BTN_LARGE)
+                            .strong()
+                            .color(score_color),
+                    );
+                });
             });
         });
 
