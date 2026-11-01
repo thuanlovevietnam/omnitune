@@ -140,6 +140,12 @@ pub fn apply_theme(ctx: &egui::Context, mode: ThemeMode) -> ThemePalette {
         egui::Visuals::light()
     };
 
+    ctx.all_styles_mut(|s| {
+        s.spacing.scroll.bar_width = 8.0;
+        s.spacing.scroll.handle_min_length = 28.0;
+        s.spacing.scroll.floating = true;
+    });
+
     visuals.override_text_color = Some(palette.text_primary);
     visuals.panel_fill = palette.bg_main;
     visuals.window_fill = palette.bg_main;

@@ -5,6 +5,7 @@ use crate::power::{set_brightness, set_cooling_policy, set_cpu_max_state_dc, set
 use crate::scenarios::{apply_scenario, detect_recommended_scenario, Scenario};
 use crate::types::ActivityEvent;
 use sysinfo::System;
+use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::SYSTEMTIME;
 use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 
@@ -24,6 +25,7 @@ pub struct AutonomousEngine {
     pub auto_pilot_enabled: bool,
     pub eco_qos_enabled: bool,
     pub auto_ram_enabled: bool,
+    pub last_ram_trim: Instant,
 }
 
 impl AutonomousEngine {
@@ -36,6 +38,7 @@ impl AutonomousEngine {
             auto_pilot_enabled: true,
             eco_qos_enabled: true,
             auto_ram_enabled: true,
+            last_ram_trim: Instant::now(),
         };
 
         engine.log("[START]", "Hệ thống tự hành OmniTune Auto-Pilot đã khởi động.".to_string());
@@ -130,8 +133,12 @@ impl AutonomousEngine {
             }
         }
 
-        // 3. Tự động thu hồi RAM khi vượt ngưỡng 80% (Memory Watchdog)
-        if self.auto_ram_enabled && ram_load_pct >= 80 {
+        // 3. Tự động thu hồi RAM khi vượt ngưỡng 85% (Memory Watchdog có cooldown 60s)
+        if self.auto_ram_enabled
+            && ram_load_pct >= 85
+            && self.last_ram_trim.elapsed() >= Duration::from_secs(60)
+        {
+            self.last_ram_trim = Instant::now();
             let (freed, count) = trim_working_sets(sys);
             if freed > 10 * 1024 * 1024 {
                 self.log(

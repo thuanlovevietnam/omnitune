@@ -3,6 +3,7 @@ use crate::battery_info::get_dual_battery_info;
 use crate::cleaner::{
     clean_target, format_bytes, get_default_targets, scan_target,
 };
+use crate::config::{load_config, save_config, set_autostart_registry, AppConfig};
 use crate::eco_qos::{apply_foreground_boost_and_eco, get_foreground_process};
 use crate::licensing::{deactivate_license, load_license, save_license, LicenseData};
 use crate::memory::{
@@ -10,7 +11,7 @@ use crate::memory::{
     MemStats,
 };
 use crate::power::{
-    get_brightness, get_cooling_policy, get_cpu_max_state_ac, get_cpu_max_state_dc, get_gamedvr,
+    get_cooling_policy, get_gamedvr,
     get_power_status, set_brightness, set_cooling_policy, set_cpu_max_state_ac,
     set_cpu_max_state_dc, set_gamedvr, set_keep_awake, set_power_scheme, set_timer_resolution_1ms,
     PowerStatus,
@@ -25,8 +26,30 @@ use crate::theme::{
 };
 use crate::types::{BatteryDetails, CleanTier, JunkCategory, ProcessMemInfo, StartupAppItem, Tab};
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, Vec2};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 use sysinfo::System;
+
+pub enum BackgroundMessage {
+    InitialScan(InitialScanResult),
+    BatteryUpdate(Vec<BatteryDetails>),
+}
+
+pub struct InitialScanResult {
+    pub mem_stats: MemStats,
+    pub top_processes: Vec<ProcessMemInfo>,
+    pub startup_apps: Vec<StartupAppItem>,
+    pub protection: ProtectionOverview,
+    pub is_telemetry_running: bool,
+    pub gamedvr_enabled: bool,
+    pub cpu_cores_info: String,
+    pub dual_batteries: Option<Vec<BatteryDetails>>,
+    pub cpu_limit_dc: Option<u32>,
+    pub cpu_limit_ac: Option<u32>,
+    pub cooling_active: Option<bool>,
+    pub foreground_info: Option<(u32, String)>,
+    pub scan_duration_ms: f64,
+}
 
 pub struct OptimizerApp {
     current_tab: Tab,
@@ -80,50 +103,56 @@ pub struct OptimizerApp {
     quick_opt_msg: String,
     last_refresh: Instant,
     last_battery_poll: Instant,
+
+    // Background hardware worker
+    bg_tx: Sender<BackgroundMessage>,
+    bg_rx: Receiver<BackgroundMessage>,
+    bg_fetch_in_progress: bool,
+    initial_scan_done: bool,
+
+    // Persistence & Tray
+    config: AppConfig,
+    run_on_startup: bool,
 }
 
 impl OptimizerApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let t0 = Instant::now();
         configure_fonts(&cc.egui_ctx);
         let theme_mode = ThemeMode::Light;
         let palette = apply_theme(&cc.egui_ctx, theme_mode);
 
-        let mut sys = System::new().expect("failed to initialize sysinfo");
-        sys.refresh_all();
-
+        let sys = System::new().expect("failed to initialize sysinfo");
         let mem_stats = get_memory_stats();
-        let mut power_status = get_power_status();
-        let top_processes = get_top_processes(&mut sys, 25);
-        let dual_batteries = get_dual_battery_info();
-        let cpu_usage = sys.global_cpu_usage();
-        let protection = get_protection_overview(cpu_usage);
-        let brightness_level = get_brightness();
+        let power_status = get_power_status();
+        let license = load_license();
 
-        let foreground_info = get_foreground_process(&sys);
+        let mut config = load_config();
+        let run_on_startup = crate::config::is_autostart_enabled();
+        config.run_on_startup = run_on_startup;
 
-        let total_discharge: u32 = dual_batteries.iter().map(|b| b.discharge_rate_mw).sum();
-        let total_charge: u32 = dual_batteries.iter().map(|b| b.charge_rate_mw).sum();
-        let avg_voltage: u32 = if !dual_batteries.is_empty() {
-            dual_batteries.iter().map(|b| b.voltage_mv).sum::<u32>() / dual_batteries.len() as u32
-        } else {
-            0
-        };
-        power_status.discharge_rate_mw = total_discharge;
-        power_status.charge_rate_mw = total_charge;
-        power_status.power_watts = if total_discharge > 0 {
-            total_discharge as f32 / 1000.0
-        } else if total_charge > 0 {
-            total_charge as f32 / 1000.0
-        } else {
-            0.0
-        };
-        power_status.voltage_volts = avg_voltage as f32 / 1000.0;
+        // Apply saved configurations immediately on launch
+        if config.timer_1ms_enabled {
+            set_timer_resolution_1ms(true);
+        }
+        if config.keep_awake_mode > 0 {
+            set_keep_awake(config.keep_awake_mode);
+        }
+        if config.cooling_active {
+            set_cooling_policy(true);
+        }
+        if config.gamedvr_enabled {
+            let _ = set_gamedvr(true);
+        }
+        if config.battery_threshold_80 {
+            let _ = set_battery_threshold(true, 80);
+        }
 
-        let cpu_cores_info = format!(
-            "{} nhân • {} luồng",
-            sysinfo::System::physical_core_count().unwrap_or(2),
-            sys.cpus().len()
-        );
+        // Apply permanent OS responsiveness tweaks
+        crate::power::apply_permanent_windows_system_tweaks();
+
+        let cfg_dc = config.cpu_limit_dc;
+        let cfg_ac = config.cpu_limit_ac;
 
         let targets = get_default_targets();
         let clean_categories = targets
@@ -138,50 +167,133 @@ impl OptimizerApp {
             })
             .collect();
 
-        let startup_apps = get_startup_apps();
-        let is_telemetry_running = is_telemetry_active();
-        let cpu_limit_dc = get_cpu_max_state_dc();
-        let cpu_limit_ac = get_cpu_max_state_ac();
-        let cooling_active = get_cooling_policy();
-        let gamedvr_enabled = get_gamedvr();
-        let license = load_license();
+        let (bg_tx, bg_rx) = channel();
+        let has_battery = power_status.has_battery;
+        let bg_tx_scan = bg_tx.clone();
+
+        // Background worker: App opens FIRST, heavy scans run in background!
+        std::thread::spawn(move || {
+            let scan_start = Instant::now();
+            let mut bg_sys = System::new().expect("failed to initialize sysinfo");
+            bg_sys.refresh_cpu_usage();
+            bg_sys.refresh_memory();
+            bg_sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+            // Apply CPU limits if configured, or read from powercfg
+            let dc = if cfg_dc > 0 {
+                let _ = set_cpu_max_state_dc(cfg_dc);
+                Some(cfg_dc)
+            } else {
+                Some(crate::power::get_cpu_max_state_dc())
+            };
+            let ac = if cfg_ac > 0 {
+                let _ = set_cpu_max_state_ac(cfg_ac);
+                Some(cfg_ac)
+            } else {
+                Some(crate::power::get_cpu_max_state_ac())
+            };
+
+            let mem = get_memory_stats();
+            let procs = get_top_processes(&mut bg_sys, 25);
+            let startups = get_startup_apps();
+            let prot = get_protection_overview(bg_sys.global_cpu_usage(), startups.len());
+            let telem = is_telemetry_active();
+            let gdvr = get_gamedvr();
+            let fg = get_foreground_process(&bg_sys);
+            let cores = format!(
+                "{} nhân • {} luồng",
+                sysinfo::System::physical_core_count().unwrap_or(2),
+                bg_sys.cpus().len()
+            );
+
+            let bats = if has_battery {
+                Some(get_dual_battery_info())
+            } else {
+                None
+            };
+            let cool = Some(get_cooling_policy());
+
+            let dur_ms = scan_start.elapsed().as_secs_f64() * 1000.0;
+
+            let _ = bg_tx_scan.send(BackgroundMessage::InitialScan(InitialScanResult {
+                mem_stats: mem,
+                top_processes: procs,
+                startup_apps: startups,
+                protection: prot,
+                is_telemetry_running: telem,
+                gamedvr_enabled: gdvr,
+                cpu_cores_info: cores,
+                dual_batteries: bats,
+                cpu_limit_dc: dc,
+                cpu_limit_ac: ac,
+                cooling_active: cool,
+                foreground_info: fg,
+                scan_duration_ms: dur_ms,
+            }));
+        });
+
+        let mut autonomous = AutonomousEngine::new();
+        autonomous.auto_pilot_enabled = config.auto_pilot_enabled;
+        autonomous.log(
+            "[TỐC ĐỘ]",
+            format!("Mở app tức thì trong {:.1} ms. Đang quét hệ thống ngầm...", t0.elapsed().as_secs_f64() * 1000.0),
+        );
 
         Self {
             current_tab: Tab::Widget,
-            autonomous: AutonomousEngine::new(),
-            foreground_info,
+            autonomous,
+            foreground_info: None,
             theme_mode,
             palette,
             sys,
             mem_stats,
             power_status,
-            dual_batteries,
-            top_processes,
-            protection,
+            dual_batteries: Vec::new(),
+            top_processes: Vec::new(),
+            protection: ProtectionOverview::default(),
             clean_categories,
             clean_status_msg: "Sẵn sàng quét rác.".to_string(),
             process_search_query: String::new(),
             process_action_msg: String::new(),
-            startup_apps,
-            is_telemetry_running,
+            startup_apps: Vec::new(),
+            is_telemetry_running: false,
             startup_action_msg: String::new(),
-            cpu_limit_dc,
-            cpu_limit_ac,
-            timer_1ms_enabled: false,
-            keep_awake_mode: 0,
-            cooling_active,
-            gamedvr_enabled,
-            brightness_level,
+            cpu_limit_dc: config.cpu_limit_dc,
+            cpu_limit_ac: config.cpu_limit_ac,
+            timer_1ms_enabled: config.timer_1ms_enabled,
+            keep_awake_mode: config.keep_awake_mode,
+            cooling_active: config.cooling_active,
+            gamedvr_enabled: config.gamedvr_enabled,
+            brightness_level: 80,
             license,
             show_license_modal: false,
             input_license_email: String::new(),
             input_license_key: String::new(),
             license_feedback_msg: String::new(),
-            cpu_cores_info,
+            cpu_cores_info: "Đang nhận diện...".to_string(),
             quick_opt_msg: String::new(),
             last_refresh: Instant::now(),
             last_battery_poll: Instant::now(),
+            bg_tx,
+            bg_rx,
+            bg_fetch_in_progress: true,
+            initial_scan_done: false,
+            config,
+            run_on_startup,
         }
+    }
+
+    pub fn sync_config(&mut self) {
+        self.config.timer_1ms_enabled = self.timer_1ms_enabled;
+        self.config.keep_awake_mode = self.keep_awake_mode;
+        self.config.cpu_limit_dc = self.cpu_limit_dc;
+        self.config.cpu_limit_ac = self.cpu_limit_ac;
+        self.config.cooling_active = self.cooling_active;
+        self.config.gamedvr_enabled = self.gamedvr_enabled;
+        self.config.auto_pilot_enabled = self.autonomous.auto_pilot_enabled;
+        self.config.battery_threshold_80 = self.protection.battery_threshold_enabled;
+        self.config.run_on_startup = self.run_on_startup;
+        save_config(&self.config);
     }
 
     fn calculate_health_score(&self) -> (u32, &'static str, Color32, Vec<String>) {
@@ -237,12 +349,88 @@ impl OptimizerApp {
         (final_score, label, color, tips)
     }
 
+    fn update_battery_metrics(&mut self, bats: Vec<BatteryDetails>) {
+        let total_discharge: u32 = bats.iter().map(|b| b.discharge_rate_mw).sum();
+        let total_charge: u32 = bats.iter().map(|b| b.charge_rate_mw).sum();
+        let avg_voltage: u32 = if !bats.is_empty() {
+            bats.iter().map(|b| b.voltage_mv).sum::<u32>() / bats.len() as u32
+        } else {
+            0
+        };
+        self.power_status.discharge_rate_mw = total_discharge;
+        self.power_status.charge_rate_mw = total_charge;
+        self.power_status.power_watts = if total_discharge > 0 {
+            total_discharge as f32 / 1000.0
+        } else if total_charge > 0 {
+            total_charge as f32 / 1000.0
+        } else {
+            0.0
+        };
+        self.power_status.voltage_volts = avg_voltage as f32 / 1000.0;
+        self.dual_batteries = bats;
+    }
+
     fn refresh_periodic(&mut self) {
+        // Drain any asynchronous background hardware query results
+        while let Ok(msg) = self.bg_rx.try_recv() {
+            match msg {
+                BackgroundMessage::InitialScan(res) => {
+                    self.initial_scan_done = true;
+                    self.mem_stats = res.mem_stats;
+                    self.top_processes = res.top_processes;
+                    self.startup_apps = res.startup_apps;
+                    self.protection = res.protection;
+                    if self.config.battery_threshold_80 {
+                        self.protection.battery_threshold_enabled = true;
+                    }
+                    self.is_telemetry_running = res.is_telemetry_running;
+                    self.cpu_cores_info = res.cpu_cores_info;
+                    self.foreground_info = res.foreground_info;
+
+                    if let Some(bats) = res.dual_batteries {
+                        self.update_battery_metrics(bats);
+                    }
+                    // Keep user's saved configurations, or fall back to detected OS values
+                    if let Some(dc) = res.cpu_limit_dc {
+                        if self.config.cpu_limit_dc == 0 {
+                            self.cpu_limit_dc = dc;
+                        }
+                    }
+                    if let Some(ac) = res.cpu_limit_ac {
+                        if self.config.cpu_limit_ac == 0 {
+                            self.cpu_limit_ac = ac;
+                        }
+                    }
+                    if let Some(cool) = res.cooling_active {
+                        if !self.config.cooling_active {
+                            self.cooling_active = cool;
+                        }
+                    }
+                    if !self.config.gamedvr_enabled {
+                        self.gamedvr_enabled = res.gamedvr_enabled;
+                    }
+
+                    self.autonomous.log(
+                        "[QUÉT XONG]",
+                        format!("Đã nhận diện toàn bộ phần cứng & tiến trình ({:.0} ms).", res.scan_duration_ms),
+                    );
+                    self.bg_fetch_in_progress = false;
+                }
+                BackgroundMessage::BatteryUpdate(bats) => {
+                    self.update_battery_metrics(bats);
+                    self.bg_fetch_in_progress = false;
+                }
+            }
+        }
+
         if self.last_refresh.elapsed() >= Duration::from_secs(1) {
-            self.sys.refresh_cpu_usage();
+            if self.initial_scan_done {
+                self.sys.refresh_cpu_usage();
+                self.protection.cpu_usage = self.sys.global_cpu_usage();
+                self.foreground_info = get_foreground_process(&self.sys);
+            }
             self.mem_stats = get_memory_stats();
             self.power_status = get_power_status();
-            self.protection.cpu_usage = self.sys.global_cpu_usage();
 
             // Run autonomous engine tick
             self.autonomous.tick(
@@ -252,29 +440,19 @@ impl OptimizerApp {
                 self.mem_stats.load_percent,
             );
 
-            self.foreground_info = get_foreground_process(&self.sys);
-
-            // Periodic ACPI battery poll (every 10s)
-            if self.last_battery_poll.elapsed() >= Duration::from_secs(10) {
-                self.dual_batteries = get_dual_battery_info();
-                let total_discharge: u32 = self.dual_batteries.iter().map(|b| b.discharge_rate_mw).sum();
-                let total_charge: u32 = self.dual_batteries.iter().map(|b| b.charge_rate_mw).sum();
-                let avg_voltage: u32 = if !self.dual_batteries.is_empty() {
-                    self.dual_batteries.iter().map(|b| b.voltage_mv).sum::<u32>() / self.dual_batteries.len() as u32
-                } else {
-                    0
-                };
-                self.power_status.discharge_rate_mw = total_discharge;
-                self.power_status.charge_rate_mw = total_charge;
-                self.power_status.power_watts = if total_discharge > 0 {
-                    total_discharge as f32 / 1000.0
-                } else if total_charge > 0 {
-                    total_charge as f32 / 1000.0
-                } else {
-                    0.0
-                };
-                self.power_status.voltage_volts = avg_voltage as f32 / 1000.0;
+            // Periodic ACPI battery poll (every 10s) running in background without UI freezing
+            if self.power_status.has_battery
+                && !self.bg_fetch_in_progress
+                && self.initial_scan_done
+                && self.last_battery_poll.elapsed() >= Duration::from_secs(10)
+            {
+                self.bg_fetch_in_progress = true;
                 self.last_battery_poll = Instant::now();
+                let tx = self.bg_tx.clone();
+                std::thread::spawn(move || {
+                    let bats = get_dual_battery_info();
+                    let _ = tx.send(BackgroundMessage::BatteryUpdate(bats));
+                });
             }
 
             self.last_refresh = Instant::now();
@@ -307,6 +485,7 @@ impl OptimizerApp {
         if !self.power_status.is_ac_online {
             let _ = set_power_scheme("SCHEME_MAX");
         }
+        crate::power::apply_permanent_windows_system_tweaks();
 
         let (_, eco_count) = apply_foreground_boost_and_eco(
             &self.sys,
@@ -332,7 +511,38 @@ impl OptimizerApp {
 impl eframe::App for OptimizerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.refresh_periodic();
-        ui.ctx().request_repaint_after(Duration::from_millis(1000));
+
+        // Check if window restore was requested from Tray
+        if crate::tray::SHOW_WINDOW_REQUESTED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+
+        // Intercept close button (X) to keep background optimizations active
+        if ui.ctx().input(|i| i.viewport().close_requested()) {
+            if self.config.minimize_to_tray {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                self.autonomous.log(
+                    "[KHAY HỆ THỐNG]",
+                    "Đã thu nhỏ xuống khay hệ thống. Mọi tối ưu (Auto-Pilot, RAM, Timer) vẫn tiếp tục duy trì.".to_string(),
+                );
+            }
+        }
+
+        // Dynamic 60 FPS repaint during user interaction (scrolling, clicking, hovering); low power 1 FPS when idle
+        let is_active = ui.input(|i| {
+            i.smooth_scroll_delta != Vec2::ZERO
+                || i.pointer.is_moving()
+                || i.pointer.any_down()
+                || !i.raw.events.is_empty()
+        });
+
+        if is_active {
+            ui.ctx().request_repaint();
+        } else {
+            ui.ctx().request_repaint_after(Duration::from_millis(1000));
+        }
 
         let p = self.palette;
 
@@ -341,6 +551,8 @@ impl eframe::App for OptimizerApp {
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
+                    .wheel_scroll_multiplier(Vec2::new(1.0, 2.5))
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
                     .show(ui, |ui| {
                         match self.current_tab {
                             Tab::Widget => self.render_widget_view(ui),
@@ -369,19 +581,23 @@ impl OptimizerApp {
             );
 
             // Auto-Pilot live badge (High contrast)
-            let (ap_text, ap_color, ap_bg) = if self.autonomous.auto_pilot_enabled {
+            let (ap_text, ap_color, ap_bg) = if !self.initial_scan_done {
+                ("⟳ Đang khởi động...", p.accent_blue, if p.is_dark { Color32::from_rgb(26, 36, 60) } else { Color32::from_rgb(226, 234, 246) })
+            } else if self.autonomous.auto_pilot_enabled {
                 ("● Auto-Pilot Tự Hành", p.success_green, if p.is_dark { Color32::from_rgb(18, 48, 28) } else { Color32::from_rgb(220, 252, 231) })
             } else {
                 ("○ Chế độ Thủ công", p.warn_amber, if p.is_dark { Color32::from_rgb(52, 38, 18) } else { Color32::from_rgb(254, 243, 199) })
             };
 
-            egui::Frame::new()
+            let ap_badge = egui::Button::new(RichText::new(ap_text).size(11.5).strong().color(ap_color))
                 .fill(ap_bg)
-                .corner_radius(CornerRadius::same(5))
-                .inner_margin(egui::Margin::symmetric(8, 4))
-                .show(ui, |ui| {
-                    ui.label(RichText::new(ap_text).size(11.5).strong().color(ap_color));
-                });
+                .corner_radius(CornerRadius::same(5));
+            if ui.add(ap_badge).on_hover_text("Bấm để Bật/Tắt chế độ Auto-Pilot tự hành (lưu tự động)").clicked() {
+                if self.initial_scan_done {
+                    self.autonomous.auto_pilot_enabled = !self.autonomous.auto_pilot_enabled;
+                    self.sync_config();
+                }
+            }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Settings button
@@ -575,7 +791,12 @@ impl OptimizerApp {
                     ui.label(RichText::new("CPU").size(11.5).strong().color(p.text_secondary));
                     let cpu = self.protection.cpu_usage;
                     let cpu_color = if cpu > 80.0 { p.danger_red } else { p.accent_blue };
-                    ui.heading(RichText::new(format!("{:.1}%", cpu)).size(22.0).strong().color(cpu_color));
+                    let cpu_text = if self.initial_scan_done {
+                        format!("{:.1}%", cpu)
+                    } else {
+                        "⟳ Đang đo".to_string()
+                    };
+                    ui.heading(RichText::new(cpu_text).size(22.0).strong().color(cpu_color));
                     ui.label(RichText::new("i7-7600U").size(11.5).strong().color(p.text_primary));
                     ui.label(RichText::new(&self.cpu_cores_info).size(10.5).color(p.text_secondary));
                 });
@@ -606,25 +827,31 @@ impl OptimizerApp {
             p.modern_card(&mut cols[2], |ui| {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("PIN").size(11.5).strong().color(p.text_secondary));
-                    let bat = self.power_status.battery_percent;
-                    let bat_color = if bat < 20 { p.danger_red } else { p.warn_amber };
-                    ui.heading(RichText::new(format!("{}%", bat)).size(22.0).strong().color(bat_color));
-                    let pwr_str = if self.power_status.discharge_rate_mw > 0 {
-                        format!("{:.1}W xả", self.power_status.power_watts)
-                    } else if self.power_status.charge_rate_mw > 0 {
-                        format!("{:.1}W nạp", self.power_status.power_watts)
-                    } else if self.power_status.is_ac_online {
-                        "Cắm sạc AC".to_string()
+                    if self.power_status.has_battery {
+                        let bat = self.power_status.battery_percent;
+                        let bat_color = if bat < 20 { p.danger_red } else { p.warn_amber };
+                        ui.heading(RichText::new(format!("{}%", bat)).size(22.0).strong().color(bat_color));
+                        let pwr_str = if self.power_status.discharge_rate_mw > 0 {
+                            format!("{:.1}W xả", self.power_status.power_watts)
+                        } else if self.power_status.charge_rate_mw > 0 {
+                            format!("{:.1}W nạp", self.power_status.power_watts)
+                        } else if self.power_status.is_ac_online {
+                            "Cắm sạc AC".to_string()
+                        } else {
+                            "Dùng pin".to_string()
+                        };
+                        ui.label(RichText::new(pwr_str).size(11.5).strong().color(p.text_primary));
+                        let volt_str = if self.power_status.voltage_volts > 0.0 {
+                            format!("{:.1} V", self.power_status.voltage_volts)
+                        } else {
+                            "Pin kép".to_string()
+                        };
+                        ui.label(RichText::new(volt_str).size(10.5).color(p.text_secondary));
                     } else {
-                        "Dùng pin".to_string()
-                    };
-                    ui.label(RichText::new(pwr_str).size(11.5).strong().color(p.text_primary));
-                    let volt_str = if self.power_status.voltage_volts > 0.0 {
-                        format!("{:.1} V", self.power_status.voltage_volts)
-                    } else {
-                        "Pin kép".to_string()
-                    };
-                    ui.label(RichText::new(volt_str).size(10.5).color(p.text_secondary));
+                        ui.heading(RichText::new("Nguồn AC").size(20.0).strong().color(p.accent_blue));
+                        ui.label(RichText::new("PC để bàn").size(11.5).strong().color(p.text_primary));
+                        ui.label(RichText::new("Trực tiếp 220V").size(10.5).color(p.text_secondary));
+                    }
                 });
             });
         });
@@ -753,6 +980,15 @@ impl OptimizerApp {
         ui.label(RichText::new("3. KHỞI ĐỘNG & BẢO VỆ PHẦN CỨNG").size(12.5).strong().color(p.accent_blue));
         ui.add_space(2.0);
         self.render_hardware_section(ui);
+
+        ui.add_space(10.0);
+        ui.separator();
+        ui.add_space(10.0);
+
+        // --- PHẦN 4: KHAY HỆ THỐNG & TỰ HÀNH CHẠY NGẦM ---
+        ui.label(RichText::new("4. KHAY HỆ THỐNG & DUY TRÌ TỐI ƯU LIÊN TỤC").size(12.5).strong().color(p.accent_blue));
+        ui.add_space(2.0);
+        self.render_tray_and_persistence_section(ui);
     }
 
     // Grid chuẩn xác, căn đều 2 cột, không bao giờ bị lệch hay tràn viền
@@ -781,24 +1017,29 @@ impl OptimizerApp {
                             ui.label(RichText::new("Pin (DC):").size(11.0).strong().color(p.text_primary));
                             if ui.add(egui::Slider::new(&mut self.cpu_limit_dc, 50..=100).suffix("%")).changed() {
                                 let _ = set_cpu_max_state_dc(self.cpu_limit_dc);
+                                self.sync_config();
                             }
                             if ui.button(RichText::new("60%").size(10.0)).clicked() {
                                 self.cpu_limit_dc = 60;
                                 let _ = set_cpu_max_state_dc(60);
+                                self.sync_config();
                             }
                             if ui.button(RichText::new("80%").size(10.0)).clicked() {
                                 self.cpu_limit_dc = 80;
                                 let _ = set_cpu_max_state_dc(80);
+                                self.sync_config();
                             }
                         });
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Sạc (AC):").size(11.0).strong().color(p.text_primary));
                             if ui.add(egui::Slider::new(&mut self.cpu_limit_ac, 50..=100).suffix("%")).changed() {
                                 let _ = set_cpu_max_state_ac(self.cpu_limit_ac);
+                                self.sync_config();
                             }
                             if ui.button(RichText::new("100% Turbo").size(10.0)).clicked() {
                                 self.cpu_limit_ac = 100;
                                 let _ = set_cpu_max_state_ac(100);
+                                self.sync_config();
                             }
                         });
                         ui.label(RichText::new("💡 Pin: 60-80% để triệt tiêu Turbo 25W; Sạc: 100% để max xung 3.9GHz.").size(10.5).color(p.text_secondary));
@@ -817,6 +1058,7 @@ impl OptimizerApp {
                             if ui.add(btn_1ms).clicked() {
                                 self.timer_1ms_enabled = true;
                                 set_timer_resolution_1ms(true);
+                                self.sync_config();
                             }
 
                             let btn_15ms = egui::Button::new(RichText::new("15.6 ms (Mặc định)").size(11.0).color(if !self.timer_1ms_enabled { Color32::WHITE } else { p.text_primary }))
@@ -824,6 +1066,7 @@ impl OptimizerApp {
                             if ui.add(btn_15ms).clicked() {
                                 self.timer_1ms_enabled = false;
                                 set_timer_resolution_1ms(false);
+                                self.sync_config();
                             }
                         });
                         ui.label(RichText::new("💡 1.0ms triệt tiêu giật khung hình & trễ chuột; 15.6ms tiết kiệm pin.").size(10.5).color(p.text_secondary));
@@ -865,6 +1108,7 @@ impl OptimizerApp {
                             if ui.add(btn_p).clicked() {
                                 self.cooling_active = false;
                                 let _ = set_cooling_policy(false);
+                                self.sync_config();
                             }
 
                             let btn_a = egui::Button::new(RichText::new("Chủ động (Active)").size(11.0).color(if self.cooling_active { Color32::WHITE } else { p.text_primary }))
@@ -872,6 +1116,7 @@ impl OptimizerApp {
                             if ui.add(btn_a).clicked() {
                                 self.cooling_active = true;
                                 let _ = set_cooling_policy(true);
+                                self.sync_config();
                             }
                         });
                         ui.label(RichText::new("💡 Passive cho cafe/remote êm ái; Active cho game & compile.").size(10.5).color(p.text_secondary));
@@ -889,13 +1134,16 @@ impl OptimizerApp {
                             if ui.button(RichText::new(gdvr_text).size(10.5)).clicked() {
                                 self.gamedvr_enabled = !self.gamedvr_enabled;
                                 let _ = set_gamedvr(self.gamedvr_enabled);
+                                self.sync_config();
                             }
 
                             if ui.selectable_value(&mut self.keep_awake_mode, 0, "Sleep OS").clicked() {
                                 set_keep_awake(0);
+                                self.sync_config();
                             }
                             if ui.selectable_value(&mut self.keep_awake_mode, 2, "Chống Sleep").clicked() {
                                 set_keep_awake(2);
+                                self.sync_config();
                             }
                         });
                         ui.label(RichText::new("💡 Tắt GameDVR giải phóng GPU encoder; Bật Chống Sleep khi remote/xem phim.").size(10.5).color(p.text_secondary));
@@ -915,6 +1163,7 @@ impl OptimizerApp {
                                 let st = !self.protection.battery_threshold_enabled;
                                 let _ = set_battery_threshold(st, 80);
                                 self.protection.battery_threshold_enabled = st;
+                                self.sync_config();
                             }
 
                             if !self.protection.is_hibernate_enabled {
@@ -1107,6 +1356,80 @@ impl OptimizerApp {
                     if ui.add(egui::Button::new(RichText::new(btn_t).size(10.5).color(Color32::WHITE)).fill(btn_c)).clicked() {
                         let _ = toggle_telemetry(self.is_telemetry_running);
                         self.is_telemetry_running = !self.is_telemetry_running;
+                    }
+                });
+            });
+        });
+    }
+
+    fn render_tray_and_persistence_section(&mut self, ui: &mut egui::Ui) {
+        let p = self.palette;
+
+        p.modern_card(ui, |ui| {
+            ui.label(RichText::new("CƠ CHẾ LƯU VĨNH VIỄN & ĐÓNG ỨNG DỤNG").size(11.5).strong().color(p.accent_blue));
+            ui.add_space(4.0);
+
+            // Ghi vĩnh viễn
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("🔒 Trạng thái lưu:").size(11.5).strong().color(p.text_primary));
+                ui.label(RichText::new("Đã ghi trực tiếp vào Windows (Registry & Powercfg)").size(11.5).color(p.success_green));
+            });
+            ui.label(RichText::new("Mọi thông số (Xung CPU, Chống Sleep, Timer 1.0ms, GameDVR, Telemetry) đều được ghi vĩnh viễn vào hệ điều hành. Khi bạn TẮT HẲN OmniTune, Windows vẫn giữ nguyên 100% các thiết lập này.").size(10.5).color(p.text_secondary));
+
+            ui.add_space(6.0);
+            let apply_btn = egui::Button::new(RichText::new("⚡ Áp dụng & Ép ghi vĩnh viễn vào Windows").size(11.0).strong().color(Color32::WHITE))
+                .fill(p.primary_btn);
+            if ui.add(apply_btn).clicked() {
+                set_cpu_max_state_dc(self.cpu_limit_dc);
+                set_cpu_max_state_ac(self.cpu_limit_ac);
+                set_timer_resolution_1ms(self.timer_1ms_enabled);
+                set_keep_awake(self.keep_awake_mode);
+                set_cooling_policy(self.cooling_active);
+                set_gamedvr(self.gamedvr_enabled);
+                crate::power::apply_permanent_windows_system_tweaks();
+                self.sync_config();
+                self.quick_opt_msg = "✓ Đã ghi toàn bộ thông số vĩnh viễn vào Windows thành công!".to_string();
+            }
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // Toggle Minimize to tray
+            if ui.checkbox(&mut self.config.minimize_to_tray, RichText::new("Thu nhỏ xuống khay hệ thống thay vì tắt hẳn khi bấm [X]").size(11.5).color(p.text_primary)).changed() {
+                self.sync_config();
+            }
+            ui.label(RichText::new("💡 Mặc định TẮT: Bấm [X] sẽ tắt ứng dụng hoàn toàn mà không cần chạy ngầm (các thông số Windows vẫn có hiệu lực). BẬT nếu bạn muốn app chạy ngầm ở góc đồng hồ.").size(10.5).color(p.text_secondary));
+
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // Toggle Run on Startup
+            if ui.checkbox(&mut self.run_on_startup, RichText::new("Khởi động ngầm cùng Windows").size(11.5).color(p.text_primary)).changed() {
+                let ok = set_autostart_registry(self.run_on_startup);
+                if ok {
+                    self.config.run_on_startup = self.run_on_startup;
+                    self.sync_config();
+                    self.startup_action_msg = if self.run_on_startup {
+                        "✓ Đã đăng ký OmniTune tự chạy cùng Windows".to_string()
+                    } else {
+                        "✓ Đã hủy đăng ký tự chạy cùng Windows".to_string()
+                    };
+                }
+            }
+
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Tắt ứng dụng:").size(11.0).color(p.text_secondary));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let exit_btn = egui::Button::new(RichText::new("Đóng OmniTune").size(11.0).color(Color32::WHITE))
+                        .fill(p.danger_red);
+                    if ui.add(exit_btn).clicked() {
+                        std::process::exit(0);
                     }
                 });
             });

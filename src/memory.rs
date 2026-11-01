@@ -60,13 +60,14 @@ pub fn get_top_processes(sys: &mut System, limit: usize) -> Vec<ProcessMemInfo> 
 pub fn trim_working_sets(sys: &mut System) -> (u64, usize) {
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
+    let my_pid = std::process::id();
     let mut trimmed_count = 0usize;
     let mut total_freed_bytes = 0u64;
 
     for (&pid, _) in sys.processes() {
         let raw_pid = pid.as_u32();
-        if raw_pid <= 4 {
-            // Skip System Idle and System
+        if raw_pid <= 4 || raw_pid == my_pid {
+            // Skip System Idle, System, and OmniTune itself
             continue;
         }
 
