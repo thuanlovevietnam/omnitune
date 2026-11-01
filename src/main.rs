@@ -68,9 +68,9 @@ fn main() -> eframe::Result {
             )
         };
 
-        // Smart Autonomous Widget size: 560x660 px (Fits comfortably on all resolutions)
-        let w = 560.0f32.min(screen_w - 20.0);
-        let h = 660.0f32.min(screen_h - 40.0).max(520.0);
+        // Smart Autonomous Widget size: 680x640 px (Comfortable layout with larger fonts)
+        let w = 680.0f32.min(screen_w - 20.0);
+        let h = 640.0f32.min(screen_h - 40.0).max(520.0);
         let x = ((screen_w - w) / 2.0).max(0.0);
         let y = ((screen_h - h) / 2.0).max(0.0);
         (x, y, w, h)
@@ -80,7 +80,7 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Glow,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([win_w, win_h])
-            .with_min_inner_size([480.0, 520.0])
+            .with_min_inner_size([560.0, 520.0])
             .with_position([pos_x, pos_y])
             .with_visible(!start_minimized)
             .with_title("OmniTune - Trợ Lý Tối Ưu Hệ Thống"),

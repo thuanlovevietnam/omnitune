@@ -21,7 +21,7 @@ use crate::protection::{
 };
 use crate::startup::{get_startup_apps, is_telemetry_active, toggle_startup_item, toggle_telemetry};
 use crate::theme::{
-    apply_theme, configure_fonts, ThemeMode, ThemePalette,
+    apply_theme, configure_fonts, spacing, typography, ThemeMode, ThemePalette,
 };
 use crate::types::{BatteryDetails, CleanTier, JunkCategory, ProcessMemInfo, StartupAppItem, Tab};
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, Vec2};
@@ -168,13 +168,13 @@ fn render_switch_custom(ui: &mut egui::Ui, value: &mut bool, on_text: &str, off_
     };
     let btn = egui::Button::new(
         RichText::new(text)
-            .size(11.0)
+            .size(typography::SWITCH_TEXT)
             .strong()
             .color(Color32::WHITE),
     )
-    .min_size(Vec2::new(66.0, 22.0))
+    .min_size(spacing::SWITCH_SIZE)
     .fill(fill_color)
-    .corner_radius(CornerRadius::same(11));
+    .corner_radius(CornerRadius::same(spacing::SWITCH_RADIUS));
 
     if ui.add(btn).clicked() {
         *value = !*value;
@@ -189,7 +189,7 @@ fn render_switch(ui: &mut egui::Ui, value: &mut bool) -> bool {
 }
 
 fn render_mini_bar(ui: &mut egui::Ui, fraction: f32, color: Color32, bg_color: Color32) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 4.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), spacing::MINI_BAR_HEIGHT), egui::Sense::hover());
     ui.painter().rect_filled(rect, CornerRadius::same(2), bg_color);
     let mut fill_rect = rect;
     fill_rect.set_width((rect.width() * fraction.clamp(0.0, 1.0)).max(2.0));
@@ -203,17 +203,310 @@ fn render_chip_frame<R>(
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
     let bg = if is_dark {
-        Color32::from_rgb(18, 26, 44)
+        Color32::from_rgb(22, 31, 52)
     } else {
-        Color32::from_rgb(246, 248, 252)
+        Color32::from_rgb(248, 250, 252)
     };
     egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(10, 8))
-        .corner_radius(CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .corner_radius(CornerRadius::same(spacing::CHIP_RADIUS))
         .fill(bg)
         .stroke(Stroke::new(1.0, border_color))
         .show(ui, add_contents)
         .inner
+}
+
+// =========================================================================
+// REUSABLE UI TEMPLATES (GIẢM LẶP CODE & TẬP TRUNG TYPOGRAPHY/LAYOUT)
+// =========================================================================
+
+macro_rules! render_settings_row {
+    ($ui:expr, |$c1:ident| $b1:expr, |$c2:ident| $b2:expr $(,)?) => {
+        $ui.columns(2, |cols| {
+            {
+                let $c1 = &mut cols[0];
+                $b1;
+            }
+            {
+                let $c2 = &mut cols[1];
+                $b2;
+            }
+        });
+        $ui.add_space(4.0);
+    };
+}
+
+fn render_switch_chip(
+    ui: &mut egui::Ui,
+    palette: &ThemePalette,
+    title: &str,
+    desc: &str,
+    value: &mut bool,
+    custom_labels: Option<(&str, &str)>,
+) -> bool {
+    render_chip_frame(ui, palette.is_dark, palette.card_border, |ui| {
+        let changed = ui
+            .horizontal(|ui| {
+                ui.label(
+                    RichText::new(title)
+                        .size(typography::CHIP_TITLE)
+                        .strong()
+                        .color(palette.text_primary),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some((on, off)) = custom_labels {
+                        render_switch_custom(ui, value, on, off)
+                    } else {
+                        render_switch(ui, value)
+                    }
+                })
+                .inner
+            })
+            .inner;
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new(desc)
+                .size(typography::CHIP_DESC)
+                .color(palette.text_secondary),
+        );
+        changed
+    })
+}
+
+fn render_slider_chip<T: egui::emath::Numeric>(
+    ui: &mut egui::Ui,
+    palette: &ThemePalette,
+    title: &str,
+    desc: &str,
+    value: &mut T,
+    range: std::ops::RangeInclusive<T>,
+    suffix: &str,
+    preset: Option<(&str, T)>,
+) -> bool {
+    render_chip_frame(ui, palette.is_dark, palette.card_border, |ui| {
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(title)
+                    .size(typography::CHIP_TITLE)
+                    .strong()
+                    .color(palette.text_primary),
+            );
+            if let Some((preset_label, preset_val)) = preset {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button(
+                            RichText::new(preset_label)
+                                .size(typography::BTN_SMALL)
+                                .strong(),
+                        )
+                        .clicked()
+                    {
+                        *value = preset_val;
+                        changed = true;
+                    }
+                });
+            }
+        });
+        ui.add_space(2.0);
+        if ui
+            .add(egui::Slider::new(value, range).suffix(suffix))
+            .changed()
+        {
+            changed = true;
+        }
+        ui.label(
+            RichText::new(desc)
+                .size(typography::CHIP_DESC)
+                .color(palette.text_secondary),
+        );
+        changed
+    })
+}
+
+fn render_action_chip(
+    ui: &mut egui::Ui,
+    palette: &ThemePalette,
+    title: &str,
+    desc: &str,
+    action_label: &str,
+    mut on_action: impl FnMut(),
+) {
+    render_chip_frame(ui, palette.is_dark, palette.card_border, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(title)
+                    .size(typography::CHIP_TITLE)
+                    .strong()
+                    .color(palette.text_primary),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button(
+                        RichText::new(action_label)
+                            .size(typography::BTN_SMALL)
+                            .strong(),
+                    )
+                    .clicked()
+                {
+                    on_action();
+                }
+            });
+        });
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new(desc)
+                .size(typography::CHIP_DESC)
+                .color(palette.text_secondary),
+        );
+    });
+}
+
+fn render_info_chip(
+    ui: &mut egui::Ui,
+    palette: &ThemePalette,
+    title: &str,
+    desc: &str,
+    badge: Option<(&str, Color32)>,
+) {
+    render_chip_frame(ui, palette.is_dark, palette.card_border, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(title)
+                    .size(typography::CHIP_TITLE)
+                    .strong()
+                    .color(palette.text_primary),
+            );
+            if let Some((badge_text, badge_color)) = badge {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(badge_text)
+                            .size(typography::BTN_NORMAL)
+                            .strong()
+                            .color(badge_color),
+                    );
+                });
+            }
+        });
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new(desc)
+                .size(typography::CHIP_DESC)
+                .color(palette.text_secondary),
+        );
+    });
+}
+
+pub struct PartitionCardResponse {
+    pub clean_clicked: bool,
+    pub toggle_clicked: bool,
+}
+
+fn render_partition_card(
+    ui: &mut egui::Ui,
+    palette: &ThemePalette,
+    icon_title: &str,
+    param_count: usize,
+    is_active: bool,
+    clean_tooltip: &str,
+    render_body: impl FnOnce(&mut egui::Ui),
+) -> PartitionCardResponse {
+    let card_bg = if is_active {
+        if palette.is_dark {
+            Color32::from_rgb(26, 42, 72)
+        } else {
+            Color32::from_rgb(225, 239, 255)
+        }
+    } else {
+        palette.card_bg
+    };
+    let card_stroke = if is_active {
+        Stroke::new(2.0, palette.accent_blue)
+    } else {
+        Stroke::new(1.0, palette.card_border)
+    };
+
+    let mut clean_clicked = false;
+    let mut toggle_clicked = false;
+
+    egui::Frame::new()
+        .inner_margin(egui::Margin::same(10))
+        .corner_radius(CornerRadius::same(spacing::CARD_RADIUS))
+        .fill(card_bg)
+        .stroke(card_stroke)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(icon_title)
+                        .size(typography::CARD_TITLE)
+                        .strong()
+                        .color(palette.text_primary),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!("{} thông số", param_count))
+                            .size(typography::BTN_NORMAL)
+                            .strong()
+                            .color(palette.accent_blue),
+                    );
+                });
+            });
+            ui.add_space(2.0);
+
+            render_body(ui);
+
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                let clean_btn = egui::Button::new(
+                    RichText::new("🧹 Dọn dẹp")
+                        .size(typography::BTN_NORMAL)
+                        .strong()
+                        .color(Color32::WHITE),
+                )
+                .fill(palette.success_green)
+                .min_size(Vec2::new(w, spacing::CARD_ACTION_BTN_HEIGHT))
+                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+
+                if ui.add(clean_btn).on_hover_text(clean_tooltip).clicked() {
+                    clean_clicked = true;
+                }
+
+                let btn_txt = if is_active {
+                    "▲ Thu gọn"
+                } else {
+                    "⚙ Cài đặt ▾"
+                };
+                let btn_fill = if is_active {
+                    palette.primary_btn
+                } else {
+                    palette.tab_inactive_bg
+                };
+                let btn_fg = if is_active {
+                    Color32::WHITE
+                } else {
+                    palette.text_primary
+                };
+                let btn = egui::Button::new(
+                    RichText::new(btn_txt)
+                        .size(typography::BTN_NORMAL)
+                        .strong()
+                        .color(btn_fg),
+                )
+                .fill(btn_fill)
+                .min_size(Vec2::new(w, spacing::CARD_ACTION_BTN_HEIGHT))
+                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+
+                if ui.add(btn).clicked() {
+                    toggle_clicked = true;
+                }
+            });
+        });
+
+    PartitionCardResponse {
+        clean_clicked,
+        toggle_clicked,
+    }
 }
 
 impl OptimizerApp {
@@ -958,7 +1251,7 @@ impl OptimizerApp {
         ui.horizontal(|ui| {
             ui.heading(
                 RichText::new("⚡ OmniTune")
-                    .size(20.0)
+                    .size(typography::APP_TITLE)
                     .strong()
                     .color(p.accent_blue),
             );
@@ -971,10 +1264,10 @@ impl OptimizerApp {
                     ("Tối", "Chuyển giao diện Tối")
                 };
 
-                let theme_btn = egui::Button::new(RichText::new(theme_text).size(12.0).strong().color(p.text_primary))
+                let theme_btn = egui::Button::new(RichText::new(theme_text).size(13.0).strong().color(p.text_primary))
                     .fill(p.card_bg)
                     .stroke(Stroke::new(1.0, p.card_border))
-                    .corner_radius(CornerRadius::same(5));
+                    .corner_radius(CornerRadius::same(6));
 
                 if ui.add(theme_btn).on_hover_text(theme_hover).clicked() {
                     self.theme_mode = match self.theme_mode {
@@ -984,23 +1277,34 @@ impl OptimizerApp {
                     self.palette = apply_theme(ui.ctx(), self.theme_mode);
                 }
 
-                ui.add_space(4.0);
+                ui.add_space(6.0);
 
                 // Pro / License status button
                 if self.license.is_valid {
-                    let pro_badge = egui::Button::new(RichText::new("★ PRO").size(11.5).strong().color(Color32::WHITE))
+                    let pro_badge = egui::Button::new(RichText::new("★ PRO").size(12.5).strong().color(Color32::WHITE))
                         .fill(Color32::from_rgb(217, 119, 6))
-                        .corner_radius(CornerRadius::same(5));
+                        .corner_radius(CornerRadius::same(6));
                     if ui.add(pro_badge).on_hover_text(format!("OmniTune Pro: {}", self.license.licensee)).clicked() {
                         self.show_license_modal = !self.show_license_modal;
                     }
                 } else {
-                    let buy_btn = egui::Button::new(RichText::new("★ Lên PRO").size(11.5).strong().color(Color32::WHITE))
+                    let buy_btn = egui::Button::new(RichText::new("★ Lên PRO").size(12.5).strong().color(Color32::WHITE))
                         .fill(p.warn_amber)
-                        .corner_radius(CornerRadius::same(5));
+                        .corner_radius(CornerRadius::same(6));
                     if ui.add(buy_btn).on_hover_text("Nâng cấp lên bản OmniTune Pro").clicked() {
                         self.show_license_modal = !self.show_license_modal;
                     }
+                }
+
+                ui.add_space(6.0);
+
+                // Advanced Settings button
+                let adv_btn = egui::Button::new(RichText::new("⚙ Chuyên sâu").size(13.0).strong().color(p.text_primary))
+                    .fill(p.card_bg)
+                    .stroke(Stroke::new(1.0, p.card_border))
+                    .corner_radius(CornerRadius::same(6));
+                if ui.add(adv_btn).on_hover_text("Mở màn hình cài đặt chuyên sâu & dọn dẹp").clicked() {
+                    self.current_tab = Tab::AdvancedSettings;
                 }
             });
         });
@@ -1011,28 +1315,28 @@ impl OptimizerApp {
         if self.show_license_modal {
             p.modern_card(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("★ BẢN QUYỀN OMNITUNE PRO").size(13.0).strong().color(p.warn_amber));
+                    ui.label(RichText::new("★ BẢN QUYỀN OMNITUNE PRO").size(14.5).strong().color(p.warn_amber));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("✕ Đóng").size(11.0)).clicked() {
+                        if ui.button(RichText::new("✕ Đóng").size(12.0)).clicked() {
                             self.show_license_modal = false;
                         }
                     });
                 });
                 ui.separator();
-                ui.label(RichText::new("Mở khóa vĩnh viễn: Dọn sạch NPM/Cargo cache hàng chục GB, Timer 1.0ms tối ưu game, khóa ngưỡng sạc pin 80%.").size(11.0).color(p.text_secondary));
+                ui.label(RichText::new("Mở khóa vĩnh viễn: Dọn sạch NPM/Cargo cache hàng chục GB, Timer 1.0ms tối ưu game, khóa ngưỡng sạc pin 80%.").size(12.2).color(p.text_secondary));
                 ui.add_space(4.0);
 
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Email:").size(11.5).strong().color(p.text_primary));
-                    ui.add(egui::TextEdit::singleline(&mut self.input_license_email).hint_text("Nhập email mua hàng...").desired_width(180.0));
+                    ui.label(RichText::new("Email:").size(12.5).strong().color(p.text_primary));
+                    ui.add(egui::TextEdit::singleline(&mut self.input_license_email).hint_text("Nhập email mua hàng...").desired_width(200.0));
                 });
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Key:").size(11.5).strong().color(p.text_primary));
-                    ui.add(egui::TextEdit::singleline(&mut self.input_license_key).hint_text("OTPRO-XXXX-XXXX-XXXX").desired_width(180.0));
+                    ui.label(RichText::new("Key:").size(12.5).strong().color(p.text_primary));
+                    ui.add(egui::TextEdit::singleline(&mut self.input_license_key).hint_text("OTPRO-XXXX-XXXX-XXXX").desired_width(200.0));
                 });
 
                 ui.horizontal(|ui| {
-                    let activate_btn = egui::Button::new(RichText::new("✓ Kích hoạt").size(11.5).strong().color(Color32::WHITE))
+                    let activate_btn = egui::Button::new(RichText::new("✓ Kích hoạt").size(12.5).strong().color(Color32::WHITE))
                         .fill(p.primary_btn);
                     if ui.add(activate_btn).clicked() {
                         if save_license(&self.input_license_email, &self.input_license_key) {
@@ -1045,7 +1349,7 @@ impl OptimizerApp {
                     }
 
                     if self.license.is_valid {
-                        if ui.button(RichText::new("Hủy kích hoạt").size(11.0)).clicked() {
+                        if ui.button(RichText::new("Hủy kích hoạt").size(12.0)).clicked() {
                             deactivate_license();
                             self.license = load_license();
                             self.license_feedback_msg = "Đã hủy kích hoạt bản quyền.".to_string();
@@ -1054,11 +1358,11 @@ impl OptimizerApp {
                 });
 
                 ui.add_space(2.0);
-                ui.label(RichText::new("💡 Master Key dùng thử offline: OTPRO-LIFETIME-VIP-2026").size(10.5).color(p.accent_blue));
+                ui.label(RichText::new("💡 Master Key dùng thử offline: OTPRO-LIFETIME-VIP-2026").size(12.0).color(p.accent_blue));
 
                 if !self.license_feedback_msg.is_empty() {
                     ui.add_space(2.0);
-                    ui.label(RichText::new(&self.license_feedback_msg).size(11.0).strong().color(p.warn_amber));
+                    ui.label(RichText::new(&self.license_feedback_msg).size(12.0).strong().color(p.warn_amber));
                 }
             });
             ui.add_space(6.0);
@@ -1068,21 +1372,21 @@ impl OptimizerApp {
         let (score, score_label, score_color, tips) = self.calculate_health_score();
         p.modern_card(ui, |ui| {
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("CHỈ SỐ SỨC KHỎE").size(11.5).strong().color(p.text_secondary));
+                ui.label(RichText::new("CHỈ SỐ SỨC KHỎE").size(13.0).strong().color(p.text_secondary));
                 ui.add_space(2.0);
                 ui.heading(
                     RichText::new(format!("{}/100", score))
-                        .size(36.0)
+                        .size(typography::HERO_SCORE)
                         .strong()
                         .color(score_color),
                 );
-                ui.label(RichText::new(score_label).size(13.0).strong().color(score_color));
+                ui.label(RichText::new(score_label).size(typography::BTN_LARGE).strong().color(score_color));
 
                 ui.add_space(6.0);
 
                 // Smart Diagnostic Tip (Wrapped)
                 if let Some(tip) = tips.first() {
-                    ui.label(RichText::new(format!("💡 {}", tip)).size(11.5).color(p.text_secondary));
+                    ui.label(RichText::new(format!("💡 {}", tip)).size(typography::BODY_TEXT).color(p.text_secondary));
                 }
 
                 ui.add_space(8.0);
@@ -1090,13 +1394,13 @@ impl OptimizerApp {
                 // Hero Action Button
                 let opt_btn = egui::Button::new(
                     RichText::new("► TỐI ƯU HÓA TOÀN DIỆN (1-CLICK)")
-                        .size(13.5)
+                        .size(typography::BTN_LARGE)
                         .strong()
                         .color(Color32::WHITE),
                 )
                 .fill(p.primary_btn)
-                .min_size(Vec2::new(ui.available_width() - 20.0, 38.0))
-                .corner_radius(CornerRadius::same(6));
+                .min_size(Vec2::new(ui.available_width() - 20.0, spacing::HERO_BTN_HEIGHT))
+                .corner_radius(CornerRadius::same(spacing::CARD_RADIUS));
 
                 if ui.add(opt_btn).clicked() {
                     self.run_quick_optimize();
@@ -1104,7 +1408,7 @@ impl OptimizerApp {
 
                 if !self.quick_opt_msg.is_empty() {
                     ui.add_space(4.0);
-                    ui.label(RichText::new(&self.quick_opt_msg).size(11.5).color(p.success_green).strong());
+                    ui.label(RichText::new(&self.quick_opt_msg).size(typography::BODY_TEXT).color(p.success_green).strong());
                 }
             });
         });
@@ -1113,38 +1417,32 @@ impl OptimizerApp {
 
         // --- 4 PHÂN VÙNG TỐI ƯU HỆ THỐNG (CPU • RAM • PIN • DRIVE) ---
         ui.horizontal(|ui| {
-            ui.label(RichText::new("4 PHÂN VÙNG TỐI ƯU HỆ THỐNG").size(12.5).strong().color(p.accent_blue));
-            ui.label(RichText::new("(Bấm phân vùng để xem và tinh chỉnh thông số)").size(10.5).color(p.text_secondary));
+            ui.label(RichText::new("4 PHÂN VÙNG TỐI ƯU HỆ THỐNG").size(typography::SECTION_TITLE).strong().color(p.accent_blue));
+            ui.label(RichText::new("(Bấm phân vùng để xem và tinh chỉnh thông số)").size(12.0).color(p.text_secondary));
         });
         ui.add_space(2.0);
 
         let total_junk: u64 = self.clean_categories.iter().map(|c| c.size_bytes).sum();
 
         // Row 1: CPU (Col 0) & RAM (Col 1)
+        let is_cpu = self.selected_partition == Some(PartitionTab::Cpu);
+        let is_ram = self.selected_partition == Some(PartitionTab::Ram);
+        let is_pin = self.selected_partition == Some(PartitionTab::Pin);
+        let is_drv = self.selected_partition == Some(PartitionTab::Drive);
+
+        let mut cpu_act = None;
+        let mut ram_act = None;
+
         ui.columns(2, |cols| {
             // Card 1: CPU
-            let is_cpu = self.selected_partition == Some(PartitionTab::Cpu);
-            let cpu_card_bg = if is_cpu {
-                if p.is_dark { Color32::from_rgb(26, 42, 72) } else { Color32::from_rgb(225, 239, 255) }
-            } else {
-                p.card_bg
-            };
-            let cpu_stroke = if is_cpu { Stroke::new(2.0, p.accent_blue) } else { Stroke::new(1.0, p.card_border) };
-
-            egui::Frame::new()
-                .inner_margin(egui::Margin::same(10))
-                .corner_radius(CornerRadius::same(8))
-                .fill(cpu_card_bg)
-                .stroke(cpu_stroke)
-                .show(&mut cols[0], |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("⚡ CPU").size(12.5).strong().color(p.text_primary));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new("17 thông số").size(10.0).strong().color(p.accent_blue));
-                        });
-                    });
-                    ui.add_space(2.0);
-
+            cpu_act = Some(render_partition_card(
+                &mut cols[0],
+                &p,
+                "⚡ CPU",
+                17,
+                is_cpu,
+                "Dọn dẹp CPU: Tối ưu ưu tiên tiến trình, ép EcoQoS các app chạy ngầm",
+                |ui| {
                     let cpu = self.protection.cpu_usage;
                     let cpu_color = if cpu > 80.0 { p.danger_red } else { p.accent_blue };
                     let cpu_text = if self.initial_scan_done {
@@ -1153,7 +1451,7 @@ impl OptimizerApp {
                         "⟳ Đang đo".to_string()
                     };
                     ui.horizontal(|ui| {
-                        ui.heading(RichText::new(cpu_text).size(22.0).strong().color(cpu_color));
+                        ui.heading(RichText::new(cpu_text).size(typography::STAT_VALUE).strong().color(cpu_color));
                         let display_cpu = self.autonomous.hardware_profile.cpu_brand
                             .replace("(R)", "")
                             .replace("(TM)", "")
@@ -1162,7 +1460,7 @@ impl OptimizerApp {
                             .chars()
                             .take(16)
                             .collect::<String>();
-                        ui.label(RichText::new(display_cpu).size(11.0).strong().color(p.text_primary));
+                        ui.label(RichText::new(display_cpu).size(typography::CHIP_TITLE).strong().color(p.text_primary));
                     });
 
                     render_mini_bar(ui, (cpu / 100.0) as f32, cpu_color, p.tab_inactive_bg);
@@ -1176,62 +1474,27 @@ impl OptimizerApp {
                         .trim()
                         .to_string();
 
-                    ui.label(RichText::new(format!("• Vi xử lý: {}", full_cpu)).size(10.0).strong().color(p.text_primary));
-                    ui.label(RichText::new(format!("• Cấu trúc: {} Nhân thực / {} Luồng", self.autonomous.hardware_profile.cpu_physical_cores, self.autonomous.hardware_profile.cpu_logical_cores)).size(9.8).color(p.text_secondary));
-                    ui.label(RichText::new(format!("• Xung nhịp: Cơ sở {} MHz • Hiện tại {} MHz", self.autonomous.hardware_profile.cpu_base_mhz, cur_cpu_mhz)).size(9.8).color(p.text_secondary));
-                    ui.label(RichText::new(format!("• Giới hạn Turbo: AC {}% | DC {}% (Sàn {}%)", self.cpu_limit_ac, self.cpu_limit_dc, self.cpu_min_state_pct)).size(9.8).color(p.text_secondary));
-
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-                        let clean_btn = egui::Button::new(RichText::new("🧹 Dọn dẹp").size(10.5).strong().color(Color32::WHITE))
-                            .fill(p.success_green)
-                            .min_size(Vec2::new(w, 26.0))
-                            .corner_radius(CornerRadius::same(5));
-                        if ui.add(clean_btn).on_hover_text("Dọn dẹp CPU: Tối ưu ưu tiên tiến trình, ép EcoQoS các app chạy ngầm").clicked() {
-                            self.clean_cpu_partition();
-                        }
-
-                        let btn_txt = if is_cpu { "▲ Thu gọn" } else { "⚙ Cài đặt (17) ▾" };
-                        let btn_fill = if is_cpu { p.primary_btn } else { p.tab_inactive_bg };
-                        let btn = egui::Button::new(RichText::new(btn_txt).size(10.5).strong().color(if is_cpu { Color32::WHITE } else { p.text_primary }))
-                            .fill(btn_fill)
-                            .min_size(Vec2::new(w, 26.0))
-                            .corner_radius(CornerRadius::same(5));
-                        if ui.add(btn).clicked() {
-                            self.selected_partition = if is_cpu { None } else { Some(PartitionTab::Cpu) };
-                        }
-                    });
-                });
+                    ui.label(RichText::new(format!("• Vi xử lý: {}", full_cpu)).size(typography::CHIP_TITLE).strong().color(p.text_primary));
+                    ui.label(RichText::new(format!("• Cấu trúc: {} Nhân thực / {} Luồng", self.autonomous.hardware_profile.cpu_physical_cores, self.autonomous.hardware_profile.cpu_logical_cores)).size(typography::DETAIL_TEXT).color(p.text_secondary));
+                    ui.label(RichText::new(format!("• Xung nhịp: Cơ sở {} MHz • Hiện tại {} MHz", self.autonomous.hardware_profile.cpu_base_mhz, cur_cpu_mhz)).size(typography::DETAIL_TEXT).color(p.text_secondary));
+                    ui.label(RichText::new(format!("• Giới hạn Turbo: AC {}% | DC {}% (Sàn {}%)", self.cpu_limit_ac, self.cpu_limit_dc, self.cpu_min_state_pct)).size(typography::DETAIL_TEXT).color(p.text_secondary));
+                },
+            ));
 
             // Card 2: RAM
-            let is_ram = self.selected_partition == Some(PartitionTab::Ram);
-            let ram_card_bg = if is_ram {
-                if p.is_dark { Color32::from_rgb(26, 42, 72) } else { Color32::from_rgb(225, 239, 255) }
-            } else {
-                p.card_bg
-            };
-            let ram_stroke = if is_ram { Stroke::new(2.0, p.accent_blue) } else { Stroke::new(1.0, p.card_border) };
-
-            egui::Frame::new()
-                .inner_margin(egui::Margin::same(10))
-                .corner_radius(CornerRadius::same(8))
-                .fill(ram_card_bg)
-                .stroke(ram_stroke)
-                .show(&mut cols[1], |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("🧠 RAM").size(12.5).strong().color(p.text_primary));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new("4 thông số").size(10.0).strong().color(p.accent_blue));
-                        });
-                    });
-                    ui.add_space(2.0);
-
+            ram_act = Some(render_partition_card(
+                &mut cols[1],
+                &p,
+                "🧠 RAM",
+                4,
+                is_ram,
+                "Dọn dẹp RAM: Thu hồi Working Set, giải phóng bộ nhớ đệm thừa",
+                |ui| {
                     let load = self.mem_stats.load_percent;
                     let ram_color = if load > 85 { p.danger_red } else { p.success_green };
                     ui.horizontal(|ui| {
-                        ui.heading(RichText::new(format!("{}%", load)).size(22.0).strong().color(ram_color));
-                        ui.label(RichText::new(format!("Dùng {} / {:.1} GB", format_bytes(self.mem_stats.used_bytes), self.autonomous.hardware_profile.ram_total_gb)).size(11.0).strong().color(p.text_primary));
+                        ui.heading(RichText::new(format!("{}%", load)).size(typography::STAT_VALUE).strong().color(ram_color));
+                        ui.label(RichText::new(format!("Dùng {} / {:.1} GB", format_bytes(self.mem_stats.used_bytes), self.autonomous.hardware_profile.ram_total_gb)).size(typography::CHIP_TITLE).strong().color(p.text_primary));
                     });
 
                     render_mini_bar(ui, (load as f32) / 100.0, ram_color, p.tab_inactive_bg);
@@ -1239,66 +1502,51 @@ impl OptimizerApp {
 
                     let pf_used = self.mem_stats.pagefile_used_bytes;
                     let pf_total = self.mem_stats.pagefile_total_bytes;
-                    ui.label(RichText::new(format!("• RAM vật lý: Dùng {} / {:.1} GB", format_bytes(self.mem_stats.used_bytes), self.autonomous.hardware_profile.ram_total_gb)).size(10.0).strong().color(p.text_primary));
-                    ui.label(RichText::new(format!("• Khả dụng: {} trống ({:.0}%)", format_bytes(self.mem_stats.free_bytes), (100.0 - load as f32).max(0.0))).size(9.8).color(p.text_secondary));
+                    ui.label(RichText::new(format!("• RAM vật lý: Dùng {} / {:.1} GB", format_bytes(self.mem_stats.used_bytes), self.autonomous.hardware_profile.ram_total_gb)).size(typography::CHIP_TITLE).strong().color(p.text_primary));
+                    ui.label(RichText::new(format!("• Khả dụng: {} trống ({:.0}%)", format_bytes(self.mem_stats.free_bytes), (100.0 - load as f32).max(0.0))).size(typography::DETAIL_TEXT).color(p.text_secondary));
                     if pf_total > 0 {
-                        ui.label(RichText::new(format!("• Bộ nhớ ảo (Pagefile): {} / {}", format_bytes(pf_used), format_bytes(pf_total))).size(9.8).color(p.text_secondary));
+                        ui.label(RichText::new(format!("• Bộ nhớ ảo (Pagefile): {} / {}", format_bytes(pf_used), format_bytes(pf_total))).size(typography::DETAIL_TEXT).color(p.text_secondary));
                     } else {
-                        ui.label(RichText::new(format!("• Nén RAM: {}", if self.memory_compression { "Đang bật (Giảm swap)" } else { "Tắt" })).size(9.8).color(p.text_secondary));
+                        ui.label(RichText::new(format!("• Nén RAM: {}", if self.memory_compression { "Đang bật (Giảm swap)" } else { "Tắt" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
                     }
-                    ui.label(RichText::new(format!("• Auto Trim: Ngưỡng {}% • Nén RAM: {}", self.ram_trim_threshold_pct, if self.memory_compression { "Bật" } else { "Tắt" })).size(9.8).color(p.text_secondary));
-
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-                        let clean_btn = egui::Button::new(RichText::new("🧹 Dọn dẹp").size(10.5).strong().color(Color32::WHITE))
-                            .fill(p.success_green)
-                            .min_size(Vec2::new(w, 26.0))
-                            .corner_radius(CornerRadius::same(5));
-                        if ui.add(clean_btn).on_hover_text("Dọn dẹp RAM: Thu hồi Working Set, giải phóng bộ nhớ đệm thừa").clicked() {
-                            self.clean_ram_partition();
-                        }
-
-                        let btn_txt = if is_ram { "▲ Thu gọn" } else { "⚙ Cài đặt (4) ▾" };
-                        let btn_fill = if is_ram { p.primary_btn } else { p.tab_inactive_bg };
-                        let btn = egui::Button::new(RichText::new(btn_txt).size(10.5).strong().color(if is_ram { Color32::WHITE } else { p.text_primary }))
-                            .fill(btn_fill)
-                            .min_size(Vec2::new(w, 26.0))
-                            .corner_radius(CornerRadius::same(5));
-                        if ui.add(btn).clicked() {
-                            self.selected_partition = if is_ram { None } else { Some(PartitionTab::Ram) };
-                        }
-                    });
-                });
+                    ui.label(RichText::new(format!("• Auto Trim: Ngưỡng {}% • Nén RAM: {}", self.ram_trim_threshold_pct, if self.memory_compression { "Bật" } else { "Tắt" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
+                },
+            ));
         });
+
+        if let Some(act) = cpu_act {
+            if act.clean_clicked {
+                self.clean_cpu_partition();
+            }
+            if act.toggle_clicked {
+                self.selected_partition = if is_cpu { None } else { Some(PartitionTab::Cpu) };
+            }
+        }
+        if let Some(act) = ram_act {
+            if act.clean_clicked {
+                self.clean_ram_partition();
+            }
+            if act.toggle_clicked {
+                self.selected_partition = if is_ram { None } else { Some(PartitionTab::Ram) };
+            }
+        }
 
         ui.add_space(6.0);
 
         // Row 2: PIN (Col 0) & DRIVE (Col 1)
+        let mut pin_act = None;
+        let mut drv_act = None;
+
         ui.columns(2, |cols| {
             // Card 3: PIN
-            let is_pin = self.selected_partition == Some(PartitionTab::Pin);
-            let pin_card_bg = if is_pin {
-                if p.is_dark { Color32::from_rgb(26, 42, 72) } else { Color32::from_rgb(225, 239, 255) }
-            } else {
-                p.card_bg
-            };
-            let pin_stroke = if is_pin { Stroke::new(2.0, p.accent_blue) } else { Stroke::new(1.0, p.card_border) };
-
-            egui::Frame::new()
-                .inner_margin(egui::Margin::same(10))
-                .corner_radius(CornerRadius::same(8))
-                .fill(pin_card_bg)
-                .stroke(pin_stroke)
-                .show(&mut cols[0], |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("🔋 PIN / NGUỒN").size(12.5).strong().color(p.text_primary));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new("6 thông số").size(10.0).strong().color(p.accent_blue));
-                        });
-                    });
-                    ui.add_space(2.0);
-
+            pin_act = Some(render_partition_card(
+                &mut cols[0],
+                &p,
+                "🔋 PIN / NGUỒN",
+                6,
+                is_pin,
+                "Dọn dẹp PIN: Kích hoạt tiết kiệm điện, ép EcoQoS giảm tiêu thụ pin",
+                |ui| {
                     if self.power_status.has_battery {
                         let bat = self.power_status.battery_percent;
                         let bat_color = if bat < 20 { p.danger_red } else if bat < 50 { p.warn_amber } else { p.success_green };
@@ -1312,13 +1560,13 @@ impl OptimizerApp {
                             "Dùng pin".to_string()
                         };
                         ui.horizontal(|ui| {
-                            ui.heading(RichText::new(format!("{}%", bat)).size(22.0).strong().color(bat_color));
+                            ui.heading(RichText::new(format!("{}%", bat)).size(typography::STAT_VALUE).strong().color(bat_color));
                             let volt_str = if self.power_status.voltage_volts > 0.0 {
                                 format!("{} • {:.1}V", pwr_str, self.power_status.voltage_volts)
                             } else {
                                 pwr_str
                             };
-                            ui.label(RichText::new(volt_str).size(11.0).strong().color(p.text_primary));
+                            ui.label(RichText::new(volt_str).size(typography::CHIP_TITLE).strong().color(p.text_primary));
                         });
 
                         render_mini_bar(ui, (bat as f32) / 100.0, bat_color, p.tab_inactive_bg);
@@ -1335,86 +1583,51 @@ impl OptimizerApp {
                             } else {
                                 0.0
                             };
-                            ui.label(RichText::new(format!("• Số lượng: 2 pin (Pin kép) • Chai TB: {:.1}%", avg_wear)).size(10.0).strong().color(p.text_primary));
-                            ui.label(RichText::new(format!("• Pin 1 ({}): Chai {:.1}% • {} chu kỳ ({}%)", b1.id, b1.wear_percent, b1.cycle_count, b1.current_charge_percent)).size(9.8).color(p.text_secondary));
-                            ui.label(RichText::new(format!("• Pin 2 ({}): Chai {:.1}% • {} chu kỳ ({}%)", b2.id, b2.wear_percent, b2.cycle_count, b2.current_charge_percent)).size(9.8).color(p.text_secondary));
-                            ui.label(RichText::new(format!("• Dung lượng: {:.1} Wh sạc đầy / {:.1} Wh gốc", tot_full, tot_design)).size(9.8).color(p.text_secondary));
+                            ui.label(RichText::new(format!("• Số lượng: 2 pin (Pin kép) • Chai TB: {:.1}%", avg_wear)).size(typography::CHIP_TITLE).strong().color(p.text_primary));
+                            ui.label(RichText::new(format!("• Pin 1 ({}): Chai {:.1}% • {} chu kỳ ({}%)", b1.id, b1.wear_percent, b1.cycle_count, b1.current_charge_percent)).size(typography::DETAIL_TEXT).color(p.text_secondary));
+                            ui.label(RichText::new(format!("• Pin 2 ({}): Chai {:.1}% • {} chu kỳ ({}%)", b2.id, b2.wear_percent, b2.cycle_count, b2.current_charge_percent)).size(typography::DETAIL_TEXT).color(p.text_secondary));
+                            ui.label(RichText::new(format!("• Dung lượng: {:.1} Wh sạc đầy / {:.1} Wh gốc", tot_full, tot_design)).size(typography::DETAIL_TEXT).color(p.text_secondary));
                         } else if num_bats == 1 {
                             let b = &self.dual_batteries[0];
                             let health = (100.0 - b.wear_percent).clamp(0.0, 100.0);
                             let full_wh = b.full_charge_capacity_mwh as f32 / 1000.0;
                             let design_wh = b.design_capacity_mwh as f32 / 1000.0;
-                            ui.label(RichText::new(format!("• Số lượng: 1 pin ({})", b.id)).size(10.0).strong().color(p.text_primary));
-                            ui.label(RichText::new(format!("• Mức độ chai: {:.1}% (Độ khỏe pin: {:.1}%)", b.wear_percent, health)).size(9.8).color(p.text_secondary));
-                            ui.label(RichText::new(format!("• Chu kỳ sạc: {} lần • {:.1} / {:.1} Wh", b.cycle_count, full_wh, design_wh)).size(9.8).color(p.text_secondary));
+                            ui.label(RichText::new(format!("• Số lượng: 1 pin ({})", b.id)).size(typography::CHIP_TITLE).strong().color(p.text_primary));
+                            ui.label(RichText::new(format!("• Mức độ chai: {:.1}% (Độ khỏe pin: {:.1}%)", b.wear_percent, health)).size(typography::DETAIL_TEXT).color(p.text_secondary));
+                            ui.label(RichText::new(format!("• Chu kỳ sạc: {} lần • {:.1} / {:.1} Wh", b.cycle_count, full_wh, design_wh)).size(typography::DETAIL_TEXT).color(p.text_secondary));
                             let bat_care_str = if self.protection.battery_threshold_enabled { "Khóa 80% (Bảo vệ pin)" } else { "100% Sạc đầy" };
-                            ui.label(RichText::new(format!("• Ngưỡng sạc: {}", bat_care_str)).size(9.8).color(p.text_secondary));
+                            ui.label(RichText::new(format!("• Ngưỡng sạc: {}", bat_care_str)).size(typography::DETAIL_TEXT).color(p.text_secondary));
                         } else {
-                            ui.label(RichText::new("• Số lượng: 1 pin (Đang nhận diện mức chai...)").size(10.0).strong().color(p.text_primary));
-                            ui.label(RichText::new(format!("• Trạng thái: {}", if self.power_status.is_ac_online { "Đang cắm nguồn AC" } else { "Đang dùng pin" })).size(9.8).color(p.text_secondary));
+                            ui.label(RichText::new("• Số lượng: 1 pin (Đang nhận diện mức chai...)").size(typography::CHIP_TITLE).strong().color(p.text_primary));
+                            ui.label(RichText::new(format!("• Trạng thái: {}", if self.power_status.is_ac_online { "Đang cắm nguồn AC" } else { "Đang dùng pin" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
                             let bat_care_str = if self.protection.battery_threshold_enabled { "Khóa 80% (Bảo vệ pin)" } else { "100% Sạc đầy" };
-                            ui.label(RichText::new(format!("• Chế độ sạc: {}", bat_care_str)).size(9.8).color(p.text_secondary));
-                            ui.label(RichText::new(format!("• Quạt làm mát: {}", if self.cooling_active { "Active" } else { "Passive (0dB)" })).size(9.8).color(p.text_secondary));
+                            ui.label(RichText::new(format!("• Chế độ sạc: {}", bat_care_str)).size(typography::DETAIL_TEXT).color(p.text_secondary));
+                            ui.label(RichText::new(format!("• Quạt làm mát: {}", if self.cooling_active { "Active" } else { "Passive (0dB)" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
                         }
                     } else {
                         ui.horizontal(|ui| {
-                            ui.heading(RichText::new("Nguồn AC").size(22.0).strong().color(p.accent_blue));
-                            ui.label(RichText::new("PC để bàn • 220V").size(11.0).strong().color(p.text_primary));
+                            ui.heading(RichText::new("Nguồn AC").size(typography::STAT_VALUE).strong().color(p.accent_blue));
+                            ui.label(RichText::new("PC để bàn • 220V").size(typography::CHIP_TITLE).strong().color(p.text_primary));
                         });
                         render_mini_bar(ui, 1.0, p.accent_blue, p.tab_inactive_bg);
                         ui.add_space(4.0);
-                        ui.label(RichText::new("• Số lượng pin: 0 (Nguồn AC trực tiếp)").size(10.0).strong().color(p.text_primary));
-                        ui.label(RichText::new("• Mức chai: Không áp dụng (PC không pin)").size(9.8).color(p.text_secondary));
-                        ui.label(RichText::new("• Cung cấp điện: Nguồn AC trực tiếp 220V").size(9.8).color(p.text_secondary));
-                        ui.label(RichText::new(format!("• Quạt tản nhiệt: {}", if self.cooling_active { "Active (Làm mát tối đa)" } else { "Passive (0dB)" })).size(9.8).color(p.text_secondary));
+                        ui.label(RichText::new("• Số lượng pin: 0 (Nguồn AC trực tiếp)").size(typography::CHIP_TITLE).strong().color(p.text_primary));
+                        ui.label(RichText::new("• Mức chai: Không áp dụng (PC không pin)").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new("• Cung cấp điện: Nguồn AC trực tiếp 220V").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(format!("• Quạt tản nhiệt: {}", if self.cooling_active { "Active (Làm mát tối đa)" } else { "Passive (0dB)" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
                     }
-
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-                        let clean_btn = egui::Button::new(RichText::new("🧹 Dọn dẹp").size(10.5).strong().color(Color32::WHITE))
-                            .fill(p.success_green)
-                            .min_size(Vec2::new(w, 26.0))
-                            .corner_radius(CornerRadius::same(5));
-                        if ui.add(clean_btn).on_hover_text("Dọn dẹp PIN: Kích hoạt tiết kiệm điện, ép EcoQoS giảm tiêu thụ pin").clicked() {
-                            self.clean_pin_partition();
-                        }
-
-                        let btn_txt = if is_pin { "▲ Thu gọn" } else { "⚙ Cài đặt (6) ▾" };
-                        let btn_fill = if is_pin { p.primary_btn } else { p.tab_inactive_bg };
-                        let btn = egui::Button::new(RichText::new(btn_txt).size(10.5).strong().color(if is_pin { Color32::WHITE } else { p.text_primary }))
-                            .fill(btn_fill)
-                            .min_size(Vec2::new(w, 26.0))
-                            .corner_radius(CornerRadius::same(5));
-                        if ui.add(btn).clicked() {
-                            self.selected_partition = if is_pin { None } else { Some(PartitionTab::Pin) };
-                        }
-                    });
-                });
+                },
+            ));
 
             // Card 4: DRIVE
-            let is_drv = self.selected_partition == Some(PartitionTab::Drive);
-            let drv_card_bg = if is_drv {
-                if p.is_dark { Color32::from_rgb(26, 42, 72) } else { Color32::from_rgb(225, 239, 255) }
-            } else {
-                p.card_bg
-            };
-            let drv_stroke = if is_drv { Stroke::new(2.0, p.accent_blue) } else { Stroke::new(1.0, p.card_border) };
-
-            egui::Frame::new()
-                .inner_margin(egui::Margin::same(10))
-                .corner_radius(CornerRadius::same(8))
-                .fill(drv_card_bg)
-                .stroke(drv_stroke)
-                .show(&mut cols[1], |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("💾 Ổ ĐĨA / DRIVE").size(12.5).strong().color(p.text_primary));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new("6 thông số").size(10.0).strong().color(p.accent_blue));
-                        });
-                    });
-                    ui.add_space(2.0);
-
+            drv_act = Some(render_partition_card(
+                &mut cols[1],
+                &p,
+                "💾 Ổ ĐĨA / DRIVE",
+                6,
+                is_drv,
+                "Dọn dẹp Ổ đĩa: Quét và xóa tệp rác Tầng 1 an toàn",
+                |ui| {
                     let drv_type = if self.autonomous.hardware_profile.is_ssd { "SSD Siêu tốc" } else { "HDD Cơ học" };
                     let d_total = self.autonomous.hardware_profile.disk_total_bytes;
                     let d_avail = self.autonomous.hardware_profile.disk_available_bytes;
@@ -1423,45 +1636,41 @@ impl OptimizerApp {
                     let drv_pct = (frac * 100.0) as u32;
 
                     ui.horizontal(|ui| {
-                        ui.heading(RichText::new(format!("{}%", drv_pct)).size(22.0).strong().color(p.accent_blue));
-                        ui.label(RichText::new(format!("{} • {}", drv_type, format_bytes(d_total))).size(11.0).strong().color(p.text_primary));
+                        ui.heading(RichText::new(format!("{}%", drv_pct)).size(typography::STAT_VALUE).strong().color(p.accent_blue));
+                        ui.label(RichText::new(format!("{} • {}", drv_type, format_bytes(d_total))).size(typography::CHIP_TITLE).strong().color(p.text_primary));
                     });
 
                     render_mini_bar(ui, frac, p.accent_blue, p.tab_inactive_bg);
                     ui.add_space(4.0);
 
                     let clean_disk = self.autonomous.hardware_profile.disk_name.chars().take(24).collect::<String>();
-                    ui.label(RichText::new(format!("• Thiết bị: {}", clean_disk)).size(10.0).strong().color(p.text_primary));
+                    ui.label(RichText::new(format!("• Thiết bị: {}", clean_disk)).size(typography::CHIP_TITLE).strong().color(p.text_primary));
                     if d_total > 0 {
-                        ui.label(RichText::new(format!("• Dung lượng: Dùng {} / Trống {}", format_bytes(d_used), format_bytes(d_avail))).size(9.8).color(p.text_secondary));
+                        ui.label(RichText::new(format!("• Dung lượng: Dùng {} / Trống {}", format_bytes(d_used), format_bytes(d_avail))).size(typography::DETAIL_TEXT).color(p.text_secondary));
                     }
                     let trim_str = if self.trim_enabled { "Bật" } else { "Tắt" };
-                    ui.label(RichText::new(format!("• Định dạng: {} • SSD TRIM: {}", self.autonomous.hardware_profile.disk_fs, trim_str)).size(9.8).color(p.text_secondary));
-                    ui.label(RichText::new(format!("• Rác hệ thống: {} (Quét 3 tầng)", format_bytes(total_junk))).size(9.8).color(p.text_secondary));
-
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-                        let clean_btn = egui::Button::new(RichText::new("🧹 Dọn dẹp").size(10.5).strong().color(Color32::WHITE))
-                            .fill(p.success_green)
-                            .min_size(Vec2::new(w, 26.0))
-                            .corner_radius(CornerRadius::same(5));
-                        if ui.add(clean_btn).on_hover_text("Dọn dẹp Ổ đĩa: Quét và xóa tệp rác Tầng 1 an toàn").clicked() {
-                            self.clean_drive_partition();
-                        }
-
-                        let btn_txt = if is_drv { "▲ Thu gọn" } else { "⚙ Cài đặt (6) ▾" };
-                        let btn_fill = if is_drv { p.primary_btn } else { p.tab_inactive_bg };
-                        let btn = egui::Button::new(RichText::new(btn_txt).size(10.5).strong().color(if is_drv { Color32::WHITE } else { p.text_primary }))
-                            .fill(btn_fill)
-                            .min_size(Vec2::new(w, 26.0))
-                            .corner_radius(CornerRadius::same(5));
-                        if ui.add(btn).clicked() {
-                            self.selected_partition = if is_drv { None } else { Some(PartitionTab::Drive) };
-                        }
-                    });
-                });
+                    ui.label(RichText::new(format!("• Định dạng: {} • SSD TRIM: {}", self.autonomous.hardware_profile.disk_fs, trim_str)).size(typography::DETAIL_TEXT).color(p.text_secondary));
+                    ui.label(RichText::new(format!("• Rác hệ thống: {} (Quét 3 tầng)", format_bytes(total_junk))).size(typography::DETAIL_TEXT).color(p.text_secondary));
+                },
+            ));
         });
+
+        if let Some(act) = pin_act {
+            if act.clean_clicked {
+                self.clean_pin_partition();
+            }
+            if act.toggle_clicked {
+                self.selected_partition = if is_pin { None } else { Some(PartitionTab::Pin) };
+            }
+        }
+        if let Some(act) = drv_act {
+            if act.clean_clicked {
+                self.clean_drive_partition();
+            }
+            if act.toggle_clicked {
+                self.selected_partition = if is_drv { None } else { Some(PartitionTab::Drive) };
+            }
+        }
 
         // --- EXPANDABLE SETTINGS CARD FOR SELECTED PARTITION ---
         if let Some(active) = self.selected_partition {
@@ -1474,9 +1683,9 @@ impl OptimizerApp {
                         PartitionTab::Pin => ("🔋", "PHÂN VÙNG PIN, NGUỒN ĐIỆN & TẢN NHIỆT", 6),
                         PartitionTab::Drive => ("💾", "PHÂN VÙNG LƯU TRỮ & Ổ ĐĨA SSD/HDD", 6),
                     };
-                    ui.label(RichText::new(format!("{} CÀI ĐẶT {} ({} THÔNG SỐ)", part_icon, part_title, count)).size(12.5).strong().color(p.accent_blue));
+                    ui.label(RichText::new(format!("{} CÀI ĐẶT {} ({} THÔNG SỐ)", part_icon, part_title, count)).size(14.0).strong().color(p.accent_blue));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("✕ Đóng cài đặt").size(11.0).strong()).clicked() {
+                        if ui.button(RichText::new("✕ Đóng cài đặt").size(12.5).strong()).clicked() {
                             self.selected_partition = None;
                         }
                     });
@@ -1497,17 +1706,18 @@ impl OptimizerApp {
                 ui.horizontal(|ui| {
                     let apply_btn = egui::Button::new(
                         RichText::new("⚡ ÁP DỤNG CÀI ĐẶT PHÂN VÙNG NÀY VÀO WINDOWS")
-                            .size(11.5)
+                            .size(13.0)
                             .strong()
                             .color(Color32::WHITE),
                     )
                     .fill(p.primary_btn)
-                    .corner_radius(CornerRadius::same(5));
+                    .min_size(Vec2::new(0.0, 36.0))
+                    .corner_radius(CornerRadius::same(6));
                     if ui.add(apply_btn).clicked() {
                         self.apply_all_criteria();
                     }
                     if !self.criteria_apply_msg.is_empty() {
-                        ui.label(RichText::new(&self.criteria_apply_msg).size(11.0).strong().color(p.success_green));
+                        ui.label(RichText::new(&self.criteria_apply_msg).size(12.5).strong().color(p.success_green));
                     }
                 });
             });
@@ -1520,16 +1730,16 @@ impl OptimizerApp {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new("Cửa sổ Focus:").size(11.5).strong().color(p.text_secondary));
+                        ui.label(RichText::new("Cửa sổ Focus:").size(13.0).strong().color(p.text_secondary));
                         if let Some((_, ref name)) = self.foreground_info {
-                            ui.label(RichText::new(name).size(12.0).strong().color(p.accent_blue));
+                            ui.label(RichText::new(name).size(13.5).strong().color(p.accent_blue));
                         } else {
-                            ui.label(RichText::new("Chưa xác định").size(11.5).color(p.text_secondary));
+                            ui.label(RichText::new("Chưa xác định").size(12.5).color(p.text_secondary));
                         }
                     });
                     ui.label(
                         RichText::new("Tự động ưu tiên luồng cho cửa sổ đang dùng, hạ EcoQoS app ngầm.")
-                            .size(11.0)
+                            .size(12.2)
                             .color(p.text_secondary),
                     );
                 });
@@ -1537,7 +1747,7 @@ impl OptimizerApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.checkbox(
                         &mut self.autonomous.eco_qos_enabled,
-                        RichText::new("EcoQoS Bật").size(11.5).strong().color(p.accent_blue),
+                        RichText::new("EcoQoS Bật").size(12.5).strong().color(p.accent_blue),
                     ).changed() {
                         self.sync_config();
                     }
@@ -1552,21 +1762,21 @@ impl OptimizerApp {
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new("[LIVE] NHẬT KÝ TỰ ĐỘNG CHẠY NGẦM")
-                        .size(11.5)
+                        .size(13.0)
                         .strong()
                         .color(p.accent_blue),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.checkbox(
                         &mut self.autonomous.auto_pilot_enabled,
-                        RichText::new("Auto-Pilot").size(11.0).strong().color(p.success_green),
+                        RichText::new("Auto-Pilot").size(12.5).strong().color(p.success_green),
                     ).changed() {
                         self.sync_config();
                     }
                     ui.add_space(6.0);
                     if ui.checkbox(
                         &mut self.autonomous.auto_ram_enabled,
-                        RichText::new("Auto-RAM").size(11.0).strong().color(p.accent_blue),
+                        RichText::new("Auto-RAM").size(12.5).strong().color(p.accent_blue),
                     ).changed() {
                         self.sync_config();
                     }
@@ -1576,18 +1786,34 @@ impl OptimizerApp {
             ui.add_space(2.0);
 
             if self.autonomous.activity_log.is_empty() {
-                ui.label(RichText::new("Đang theo dõi ngữ cảnh...").size(11.0).color(p.text_secondary));
+                ui.label(RichText::new("Đang theo dõi ngữ cảnh...").size(12.2).color(p.text_secondary));
             } else {
                 for ev in self.autonomous.activity_log.iter().take(5) {
                     ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(&ev.time).size(10.5).color(p.text_secondary));
-                        ui.label(RichText::new(ev.icon).size(11.0).strong().color(p.accent_blue));
-                        ui.label(RichText::new(&ev.message).size(11.0).color(p.text_primary));
+                        ui.label(RichText::new(&ev.time).size(11.8).color(p.text_secondary));
+                        ui.label(RichText::new(ev.icon).size(12.5).strong().color(p.accent_blue));
+                        ui.label(RichText::new(&ev.message).size(12.2).color(p.text_primary));
                     });
                     ui.add_space(2.0);
                 }
             }
         });
+
+        ui.add_space(8.0);
+        let adv_nav_btn = egui::Button::new(
+            RichText::new("⚙ MỞ MA TRẬN CÀI ĐẶT CHUYÊN SÂU & DỌN RÁC 3 TẦNG ►")
+                .size(13.5)
+                .strong()
+                .color(p.accent_blue),
+        )
+        .fill(p.card_bg)
+        .stroke(Stroke::new(1.0, p.accent_blue))
+        .min_size(Vec2::new(ui.available_width(), 40.0))
+        .corner_radius(CornerRadius::same(8));
+
+        if ui.add(adv_nav_btn).clicked() {
+            self.current_tab = Tab::AdvancedSettings;
+        }
     }
 
     // =========================================================================
@@ -1599,12 +1825,12 @@ impl OptimizerApp {
         ui.horizontal(|ui| {
             let back_btn = egui::Button::new(
                 RichText::new("◄ Quay lại Widget")
-                    .size(12.0)
+                    .size(13.0)
                     .strong()
                     .color(Color32::WHITE),
             )
             .fill(p.primary_btn)
-            .corner_radius(CornerRadius::same(5));
+            .corner_radius(CornerRadius::same(6));
 
             if ui.add(back_btn).clicked() {
                 self.current_tab = Tab::Widget;
@@ -1612,7 +1838,7 @@ impl OptimizerApp {
 
             ui.heading(
                 RichText::new("Cài Đặt & Ma Trận Tinh Chỉnh Chuyên Sâu")
-                    .size(15.5)
+                    .size(17.0)
                     .strong()
                     .color(p.text_primary),
             );
@@ -1621,25 +1847,25 @@ impl OptimizerApp {
         ui.add_space(6.0);
         ui.label(
             RichText::new("Can thiệp sâu vào thông số phần cứng, dọn rác 3 tầng, tiến trình và bảo vệ máy.")
-                .size(11.5)
+                .size(12.5)
                 .color(p.text_secondary),
         );
         ui.add_space(6.0);
 
         // --- CHỌN CHẾ ĐỘ TỐI ƯU HỆ THỐNG ---
-        ui.label(RichText::new("CHẾ ĐỘ TỐI ƯU HỆ THỐNG HIỆN TẠI").size(12.5).strong().color(p.accent_blue));
+        ui.label(RichText::new("CHẾ ĐỘ TỐI ƯU HỆ THỐNG HIỆN TẠI").size(14.0).strong().color(p.accent_blue));
         ui.add_space(2.0);
         p.modern_card(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 let is_hw = self.autonomous.operating_mode == OperatingMode::HardwareOptimal;
                 let hw_btn = egui::Button::new(
                     RichText::new(if is_hw { "● 1. Tối ưu Phần Cứng & OS (Theo máy thực tế)" } else { "○ 1. Tối ưu Phần Cứng & OS" })
-                        .size(11.5)
+                        .size(13.0)
                         .strong()
                         .color(if is_hw { Color32::WHITE } else { p.text_primary }),
                 )
                 .fill(if is_hw { p.primary_btn } else { p.tab_inactive_bg })
-                .corner_radius(CornerRadius::same(5));
+                .corner_radius(CornerRadius::same(6));
 
                 if ui.add(hw_btn).clicked() {
                     self.autonomous.set_operating_mode(
@@ -1654,12 +1880,12 @@ impl OptimizerApp {
                 let is_wl = self.autonomous.operating_mode == OperatingMode::WorkloadAdaptive;
                 let wl_btn = egui::Button::new(
                     RichText::new(if is_wl { "● 2. Tự Động Theo Công Việc (Auto-Pilot)" } else { "○ 2. Tự Động Theo Công Việc" })
-                        .size(11.5)
+                        .size(13.0)
                         .strong()
                         .color(if is_wl { Color32::WHITE } else { p.text_primary }),
                 )
                 .fill(if is_wl { p.accent_blue } else { p.tab_inactive_bg })
-                .corner_radius(CornerRadius::same(5));
+                .corner_radius(CornerRadius::same(6));
 
                 if ui.add(wl_btn).clicked() {
                     self.autonomous.set_operating_mode(
@@ -1676,7 +1902,7 @@ impl OptimizerApp {
         ui.add_space(8.0);
 
         // --- PHẦN 1: BẢNG MA TRẬN 33 THÔNG SỐ TỐI ƯU HỆ THỐNG ---
-        ui.label(RichText::new("1. MA TRẬN 33 THÔNG SỐ TỐI ƯU HỆ THỐNG & PHẦN CỨNG").size(12.5).strong().color(p.accent_blue));
+        ui.label(RichText::new("1. MA TRẬN 33 THÔNG SỐ TỐI ƯU HỆ THỐNG & PHẦN CỨNG").size(typography::SECTION_TITLE).strong().color(p.accent_blue));
         ui.add_space(2.0);
         self.render_all_parameters_grid(ui);
 
@@ -1685,7 +1911,7 @@ impl OptimizerApp {
         ui.add_space(10.0);
 
         // --- PHẦN 2: DỌN RÁC 3 TẦNG & RAM ---
-        ui.label(RichText::new("2. DỌN DẸP RÁC 3 TẦNG & BỘ NHỚ RAM").size(12.5).strong().color(p.accent_blue));
+        ui.label(RichText::new("2. DỌN DẸP RÁC 3 TẦNG & BỘ NHỚ RAM").size(typography::SECTION_TITLE).strong().color(p.accent_blue));
         ui.add_space(2.0);
         self.render_cleaner_section(ui);
 
@@ -1694,7 +1920,7 @@ impl OptimizerApp {
         ui.add_space(10.0);
 
         // --- PHẦN 3: KHỞI ĐỘNG & BẢO VỆ ---
-        ui.label(RichText::new("3. KHỞI ĐỘNG & BẢO VỆ PHẦN CỨNG").size(12.5).strong().color(p.accent_blue));
+        ui.label(RichText::new("3. KHỞI ĐỘNG & BẢO VỆ PHẦN CỨNG").size(typography::SECTION_TITLE).strong().color(p.accent_blue));
         ui.add_space(2.0);
         self.render_hardware_section(ui);
 
@@ -1703,7 +1929,7 @@ impl OptimizerApp {
         ui.add_space(10.0);
 
         // --- PHẦN 4: KHAY HỆ THỐNG & TỰ HÀNH CHẠY NGẦM ---
-        ui.label(RichText::new("4. KHAY HỆ THỐNG & DUY TRÌ TỐI ƯU LIÊN TỤC").size(12.5).strong().color(p.accent_blue));
+        ui.label(RichText::new("4. KHAY HỆ THỐNG & DUY TRÌ TỐI ƯU LIÊN TỤC").size(typography::SECTION_TITLE).strong().color(p.accent_blue));
         ui.add_space(2.0);
         self.render_tray_and_persistence_section(ui);
     }
@@ -1716,19 +1942,20 @@ impl OptimizerApp {
             ui.horizontal(|ui| {
                 let apply_all_btn = egui::Button::new(
                     RichText::new("⚡ ÁP DỤNG TOÀN BỘ 33 THÔNG SỐ VÀO CÀI ĐẶT & WINDOWS")
-                        .size(12.0)
+                        .size(typography::CHIP_TITLE)
                         .strong()
                         .color(Color32::WHITE),
                 )
                 .fill(p.primary_btn)
-                .corner_radius(CornerRadius::same(6));
+                .min_size(Vec2::new(0.0, spacing::MASTER_APPLY_BTN_HEIGHT))
+                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
 
                 if ui.add(apply_all_btn).clicked() {
                     self.apply_all_criteria();
                 }
 
                 if !self.criteria_apply_msg.is_empty() {
-                    ui.label(RichText::new(&self.criteria_apply_msg).size(11.5).strong().color(p.success_green));
+                    ui.label(RichText::new(&self.criteria_apply_msg).size(12.5).strong().color(p.success_green));
                 }
             });
         });
@@ -1738,7 +1965,7 @@ impl OptimizerApp {
         // PHÂN VÙNG 1: CPU (17 THÔNG SỐ)
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("⚡ PHÂN VÙNG 1: CPU & ĐIỀU ĐỘ TIẾN TRÌNH (17 THÔNG SỐ)").size(12.0).strong().color(p.accent_blue));
+                ui.label(RichText::new("⚡ PHÂN VÙNG 1: CPU & ĐIỀU ĐỘ TIẾN TRÌNH (17 THÔNG SỐ)").size(13.5).strong().color(p.accent_blue));
             });
             ui.separator();
             self.render_cpu_partition_settings(ui);
@@ -1749,7 +1976,7 @@ impl OptimizerApp {
         // PHÂN VÙNG 2: RAM (4 THÔNG SỐ)
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("🧠 PHÂN VÙNG 2: BỘ NHỚ RAM & CACHE (4 THÔNG SỐ)").size(12.0).strong().color(p.accent_blue));
+                ui.label(RichText::new("🧠 PHÂN VÙNG 2: BỘ NHỚ RAM & CACHE (4 THÔNG SỐ)").size(13.5).strong().color(p.accent_blue));
             });
             ui.separator();
             self.render_ram_partition_settings(ui);
@@ -1760,7 +1987,7 @@ impl OptimizerApp {
         // PHÂN VÙNG 3: PIN / NGUỒN (6 THÔNG SỐ)
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("🔋 PHÂN VÙNG 3: PIN, NGUỒN ĐIỆN & TẢN NHIỆT (6 THÔNG SỐ)").size(12.0).strong().color(p.accent_blue));
+                ui.label(RichText::new("🔋 PHÂN VÙNG 3: PIN, NGUỒN ĐIỆN & TẢN NHIỆT (6 THÔNG SỐ)").size(13.5).strong().color(p.accent_blue));
             });
             ui.separator();
             self.render_pin_partition_settings(ui);
@@ -1771,7 +1998,7 @@ impl OptimizerApp {
         // PHÂN VÙNG 4: DRIVE / Ổ ĐĨA (6 THÔNG SỐ)
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("💾 PHÂN VÙNG 4: LƯU TRỮ, Ổ ĐĨA SSD/HDD & RÁC (6 THÔNG SỐ)").size(12.0).strong().color(p.accent_blue));
+                ui.label(RichText::new("💾 PHÂN VÙNG 4: LƯU TRỮ, Ổ ĐĨA SSD/HDD & RÁC (6 THÔNG SỐ)").size(13.5).strong().color(p.accent_blue));
             });
             ui.separator();
             self.render_drive_partition_settings(ui);
@@ -1782,590 +2009,596 @@ impl OptimizerApp {
         let p = self.palette;
 
         // Row 1: AC Turbo & Min State
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("1. ⚡ Công suất CPU khi cắm sạc").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("100% Turbo").size(9.5)).clicked() {
-                            self.cpu_limit_ac = 100;
-                            let _ = set_cpu_max_state_ac(100);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                if ui.add(egui::Slider::new(&mut self.cpu_limit_ac, 50..=100).suffix("%")).changed() {
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_slider_chip(
+                    ui,
+                    &p,
+                    "1. ⚡ Công suất CPU khi cắm sạc",
+                    "Mở khóa xung Turbo tối đa cho mọi nhân khi cắm điện",
+                    &mut self.cpu_limit_ac,
+                    50..=100,
+                    "%",
+                    Some(("100% Turbo", 100)),
+                ) {
                     let _ = set_cpu_max_state_ac(self.cpu_limit_ac);
                     self.sync_config();
                 }
-                ui.label(RichText::new("Mở khóa xung Turbo tối đa cho mọi nhân khi cắm điện").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("2. ❄️ Hạ xung sâu khi nghỉ (Min State)").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("5% Chuẩn").size(9.5)).clicked() {
-                            self.cpu_min_state_pct = 5;
-                            let _ = crate::power::set_cpu_min_state(5);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                if ui.add(egui::Slider::new(&mut self.cpu_min_state_pct, 1..=50).suffix("%")).changed() {
+            },
+            |ui| {
+                if render_slider_chip(
+                    ui,
+                    &p,
+                    "2. ❄️ Hạ xung sâu khi nghỉ (Min State)",
+                    "Hạ xung sâu khi nhàn rỗi để giảm nhiệt và tiết kiệm điện",
+                    &mut self.cpu_min_state_pct,
+                    1..=50,
+                    "%",
+                    Some(("5% Chuẩn", 5)),
+                ) {
                     let _ = crate::power::set_cpu_min_state(self.cpu_min_state_pct);
                     self.sync_config();
                 }
-                ui.label(RichText::new("Hạ xung sâu khi nhàn rỗi để giảm nhiệt và tiết kiệm điện").size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+            },
+        );
 
         // Row 2: Quantum Boost & EcoQoS
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("3. ⚡ Tăng tốc app đang dùng").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.win32_priority_boost) {
-                            crate::power::set_win32_priority_separation(self.win32_priority_boost);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Cấp 3x chu kỳ CPU Quantum cho cửa sổ active (Win32Priority)").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("4. 🌱 Ép app ngầm tiết kiệm điện").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.autonomous.eco_qos_enabled) {
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Đưa tiến trình chạy ngầm vào lõi E-Core (EcoQoS)").size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "3. ⚡ Tăng tốc app đang dùng",
+                    "Cấp 3x chu kỳ CPU Quantum cho cửa sổ active (Win32Priority)",
+                    &mut self.win32_priority_boost,
+                    None,
+                ) {
+                    crate::power::set_win32_priority_separation(self.win32_priority_boost);
+                    self.sync_config();
+                }
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "4. 🌱 Ép app ngầm tiết kiệm điện",
+                    "Đưa tiến trình chạy ngầm vào lõi E-Core (EcoQoS)",
+                    &mut self.autonomous.eco_qos_enabled,
+                    None,
+                ) {
+                    self.sync_config();
+                }
+            },
+        );
 
         // Row 3: Foreground Priority Boost & Fast HungApp Recovery
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("5. 🚀 Tự ưu tiên app active").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.autonomous.auto_pilot_enabled) {
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Nâng mức ưu tiên AboveNormal cho cửa sổ đang mở").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("6. ⏱️ Đóng nhanh app bị treo đơ").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.fast_shutdown_recovery) {
-                            crate::power::set_fast_shutdown_recovery(self.fast_shutdown_recovery);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Giải phóng app treo trong 1s & tắt máy tức thì (HungApp 1s)").size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "5. 🚀 Tự ưu tiên app active",
+                    "Nâng mức ưu tiên AboveNormal cho cửa sổ đang mở",
+                    &mut self.autonomous.auto_pilot_enabled,
+                    None,
+                ) {
+                    self.sync_config();
+                }
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "6. ⏱️ Đóng nhanh app bị treo đơ",
+                    "Giải phóng app treo trong 1s & tắt máy tức thì (HungApp 1s)",
+                    &mut self.fast_shutdown_recovery,
+                    None,
+                ) {
+                    crate::power::set_fast_shutdown_recovery(self.fast_shutdown_recovery);
+                    self.sync_config();
+                }
+            },
+        );
 
         // Row 4: High Precision Timer & MMCSS Gaming
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("7. 🎯 Giảm trễ chuột & game").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch_custom(ui, &mut self.timer_1ms_enabled, "● 1.0 ms", "○ 15.6 ms") {
-                            set_timer_resolution_1ms(self.timer_1ms_enabled);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Triệt tiêu trễ chuột & giật khung hình (Timer Resolution 1ms)").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("8. 🎮 Chống bóp mạng khi game/nhạc").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.mmcss_optimized) {
-                            crate::power::set_mmcss_gaming_responsiveness(self.mmcss_optimized);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Không bóp băng thông mạng khi phát audio/game (MMCSS)").size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "7. 🎯 Giảm trễ chuột & game",
+                    "Triệt tiêu trễ chuột & giật khung hình (Timer Resolution 1ms)",
+                    &mut self.timer_1ms_enabled,
+                    Some(("● 1.0 ms", "○ 15.6 ms")),
+                ) {
+                    set_timer_resolution_1ms(self.timer_1ms_enabled);
+                    self.sync_config();
+                }
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "8. 🎮 Chống bóp mạng khi game/nhạc",
+                    "Không bóp băng thông mạng khi phát audio/game (MMCSS)",
+                    &mut self.mmcss_optimized,
+                    None,
+                ) {
+                    crate::power::set_mmcss_gaming_responsiveness(self.mmcss_optimized);
+                    self.sync_config();
+                }
+            },
+        );
 
         // Row 5: SystemResponsiveness 0 & GameDVR
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("9. 💥 Dồn 100% CPU cho app chính").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.system_responsiveness_zero) {
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Hủy bỏ 20% dự trữ của Windows, dành trọn tài nguyên cho app").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("10. 🎬 Tắt quay màn hình ngầm").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch_custom(ui, &mut self.gamedvr_enabled, "● ĐÃ TẮT", "○ ĐANG BẬT") {
-                            let _ = set_gamedvr(self.gamedvr_enabled);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Giải phóng bộ mã hóa GPU encoder nền (GameDVR & Capture)").size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "9. 💥 Dồn 100% CPU cho app chính",
+                    "Hủy bỏ 20% dự trữ của Windows, dành trọn tài nguyên cho app",
+                    &mut self.system_responsiveness_zero,
+                    None,
+                ) {
+                    self.sync_config();
+                }
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "10. 🎬 Tắt quay màn hình ngầm",
+                    "Giải phóng bộ mã hóa GPU encoder nền (GameDVR & Capture)",
+                    &mut self.gamedvr_enabled,
+                    Some(("● ĐÃ TẮT", "○ ĐANG BẬT")),
+                ) {
+                    let _ = set_gamedvr(self.gamedvr_enabled);
+                    self.sync_config();
+                }
+            },
+        );
 
         // Row 6: MenuShowDelay & StartupDelay
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("11. ⚡ Mở menu chuột phải tức thì").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.menu_show_delay_zero) {
-                            crate::power::set_menu_show_delay(self.menu_show_delay_zero);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Triệt tiêu độ trễ 400ms của menu chuột phải và Start (0ms)").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("12. 🏎️ Vào Desktop không chờ 10s").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.startup_delay_zero) {
-                            crate::power::set_startup_delay(self.startup_delay_zero);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Bỏ thời gian hoãn nạp app khi khởi động Explorer (0ms)").size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "11. ⚡ Mở menu chuột phải tức thì",
+                    "Triệt tiêu độ trễ 400ms của menu chuột phải và Start (0ms)",
+                    &mut self.menu_show_delay_zero,
+                    None,
+                ) {
+                    crate::power::set_menu_show_delay(self.menu_show_delay_zero);
+                    self.sync_config();
+                }
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "12. 🏎️ Vào Desktop không chờ 10s",
+                    "Bỏ thời gian hoãn nạp app khi khởi động Explorer (0ms)",
+                    &mut self.startup_delay_zero,
+                    None,
+                ) {
+                    crate::power::set_startup_delay(self.startup_delay_zero);
+                    self.sync_config();
+                }
+            },
+        );
 
         // Row 7: TCP Auto-Tuning & TCP ECN
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("13. 🌐 Tự tăng tốc tải file mạng").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.tcp_autotuning) {
-                            crate::power::set_tcp_optimization(self.tcp_autotuning);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Tự động mở rộng buffer card mạng đạt tốc độ tối đa").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("14. 📶 Chống rớt gói tin & lag ping").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.tcp_ecn_enabled) {
-                            crate::power::set_tcp_ecn(self.tcp_ecn_enabled);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Báo nghẽn mạng để router điều tiết không rớt gói tin (TCP ECN)").size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "13. 🌐 Tự tăng tốc tải file mạng",
+                    "Tự động mở rộng buffer card mạng đạt tốc độ tối đa",
+                    &mut self.tcp_autotuning,
+                    None,
+                ) {
+                    crate::power::set_tcp_optimization(self.tcp_autotuning);
+                    self.sync_config();
+                }
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "14. 📶 Chống rớt gói tin & lag ping",
+                    "Báo nghẽn mạng để router điều tiết không rớt gói tin (TCP ECN)",
+                    &mut self.tcp_ecn_enabled,
+                    None,
+                ) {
+                    crate::power::set_tcp_ecn(self.tcp_ecn_enabled);
+                    self.sync_config();
+                }
+            },
+        );
 
         // Row 8: DiagTrack & dmwappushservice
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("15. 🛡️ Chặn gửi dữ liệu ngầm").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch_custom(ui, &mut self.disable_telemetry, "● ĐÃ CHẶN", "○ ĐANG BẬT") {
-                            crate::startup::toggle_telemetry(self.disable_telemetry);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Dừng thu thập và gửi dữ liệu chẩn đoán về Microsoft (DiagTrack)").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("16. 🔒 Tắt cổng nhận lệnh ngầm").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch_custom(ui, &mut self.disable_dmwappush, "● ĐÃ TẮT", "○ ĐANG BẬT") {
-                            crate::startup::toggle_telemetry(self.disable_dmwappush);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Vô hiệu hóa cổng nhận lệnh thu thập từ xa (WAP Push Service)").size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "15. 🛡️ Chặn gửi dữ liệu ngầm",
+                    "Dừng thu thập và gửi dữ liệu chẩn đoán về Microsoft (DiagTrack)",
+                    &mut self.disable_telemetry,
+                    Some(("● ĐÃ CHẶN", "○ ĐANG BẬT")),
+                ) {
+                    crate::startup::toggle_telemetry(self.disable_telemetry);
+                    self.sync_config();
+                }
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "16. 🔒 Tắt cổng nhận lệnh ngầm",
+                    "Vô hiệu hóa cổng nhận lệnh thu thập từ xa (WAP Push Service)",
+                    &mut self.disable_dmwappush,
+                    Some(("● ĐÃ TẮT", "○ ĐANG BẬT")),
+                ) {
+                    crate::startup::toggle_telemetry(self.disable_dmwappush);
+                    self.sync_config();
+                }
+            },
+        );
 
         // Row 9: Startup Apps & Architecture Status
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("17. ⚙️ Kiểm soát app khởi động").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{} app", self.startup_apps.len())).size(10.5).strong().color(p.accent_blue));
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Tắt ứng dụng khởi động thừa giúp Windows boot dưới 10 giây").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("💡 Trạng thái điều phối CPU").size(11.0).strong().color(p.accent_blue));
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new(format!("Đã tối ưu chuẩn cho cấu hình {} nhân / {} luồng", self.autonomous.hardware_profile.cpu_physical_cores, self.autonomous.hardware_profile.cpu_logical_cores)).size(9.5).color(p.text_secondary));
-            });
-        });
+        render_settings_row!(
+            ui,
+            |ui| {
+                let count_str = format!("{} app", self.startup_apps.len());
+                render_info_chip(
+                    ui,
+                    &p,
+                    "17. ⚙️ Kiểm soát app khởi động",
+                    "Tắt ứng dụng khởi động thừa giúp Windows boot dưới 10 giây",
+                    Some((&count_str, p.accent_blue)),
+                );
+            },
+            |ui| {
+                let arch_desc = format!(
+                    "Đã tối ưu chuẩn cho cấu hình {} nhân / {} luồng",
+                    self.autonomous.hardware_profile.cpu_physical_cores,
+                    self.autonomous.hardware_profile.cpu_logical_cores
+                );
+                render_info_chip(
+                    ui,
+                    &p,
+                    "💡 Trạng thái điều phối CPU",
+                    &arch_desc,
+                    None,
+                );
+            },
+        );
     }
 
     fn render_ram_partition_settings(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
         // Row 1: Auto RAM Trim & Threshold
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("1. 🧹 Tự động dọn RAM khi đầy").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.autonomous.auto_ram_enabled) {
-                            self.sync_config();
-                        }
+        render_settings_row!(
+            ui,
+            |ui| {
+                render_chip_frame(ui, p.is_dark, p.card_border, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("1. 🧹 Tự động dọn RAM khi đầy")
+                                .size(typography::CHIP_TITLE)
+                                .strong()
+                                .color(p.text_primary),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if render_switch(ui, &mut self.autonomous.auto_ram_enabled) {
+                                self.sync_config();
+                            }
+                        });
+                    });
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Thu hồi Working Set bộ nhớ đệm thừa")
+                                .size(typography::CHIP_DESC)
+                                .color(p.text_secondary),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .button(
+                                    RichText::new("⚡ Thu hồi ngay")
+                                        .size(typography::BTN_SMALL)
+                                        .strong(),
+                                )
+                                .clicked()
+                            {
+                                let (freed, count) = trim_working_sets(&mut self.sys);
+                                self.criteria_apply_msg =
+                                    format!("✓ Thu hồi {} từ {} tiến trình.", format_bytes(freed), count);
+                            }
+                        });
                     });
                 });
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Thu hồi Working Set bộ nhớ đệm thừa").size(9.5).color(p.text_secondary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("⚡ Thu hồi ngay").size(9.5)).clicked() {
-                            let (freed, count) = trim_working_sets(&mut self.sys);
-                            self.criteria_apply_msg = format!("✓ Thu hồi {} từ {} tiến trình.", format_bytes(freed), count);
-                        }
-                    });
-                });
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("2. 📊 Ngưỡng tự động dọn RAM").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{}%", self.ram_trim_threshold_pct)).size(10.5).strong().color(p.accent_blue));
-                    });
-                });
-                ui.add_space(2.0);
-                if ui.add(egui::Slider::new(&mut self.ram_trim_threshold_pct, 60..=95).suffix("%")).changed() {
-                    self.autonomous.hardware_profile.dynamic_ram_threshold_pct = self.ram_trim_threshold_pct;
+            },
+            |ui| {
+                let ram_total = self.autonomous.hardware_profile.ram_total_gb;
+                let desc = format!("Kích hoạt dọn dẹp khi bộ nhớ vượt ngưỡng (máy {:.1} GB)", ram_total);
+                if render_slider_chip(
+                    ui,
+                    &p,
+                    "2. 📊 Ngưỡng tự động dọn RAM",
+                    &desc,
+                    &mut self.ram_trim_threshold_pct,
+                    60..=95,
+                    "%",
+                    None,
+                ) {
+                    self.autonomous.hardware_profile.dynamic_ram_threshold_pct =
+                        self.ram_trim_threshold_pct;
                     self.sync_config();
                 }
-                ui.label(RichText::new(format!("Kích hoạt dọn dẹp khi bộ nhớ vượt ngưỡng (máy {:.1} GB)", self.autonomous.hardware_profile.ram_total_gb)).size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+            },
+        );
 
         // Row 2: LargeSystemCache & Memory Compression
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("3. 📁 Tăng tốc đệm đọc ghi tệp").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.large_system_cache) {
-                            crate::power::set_large_system_cache(self.large_system_cache);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Mở rộng cache đọc ghi tệp hệ thống (LargeSystemCache)").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("4. 🗜️ Nén RAM chống nghẽn đĩa").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.memory_compression) {
-                            crate::power::set_memory_compression(self.memory_compression);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Nén trang RAM trong bộ nhớ, giảm ghi swap bảo vệ SSD").size(9.5).color(p.text_secondary));
-            });
-        });
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "3. 📁 Tăng tốc đệm đọc ghi tệp",
+                    "Mở rộng cache đọc ghi tệp hệ thống (LargeSystemCache)",
+                    &mut self.large_system_cache,
+                    None,
+                ) {
+                    crate::power::set_large_system_cache(self.large_system_cache);
+                    self.sync_config();
+                }
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "4. 🗜️ Nén RAM chống nghẽn đĩa",
+                    "Nén trang RAM trong bộ nhớ, giảm ghi swap bảo vệ SSD",
+                    &mut self.memory_compression,
+                    None,
+                ) {
+                    crate::power::set_memory_compression(self.memory_compression);
+                    self.sync_config();
+                }
+            },
+        );
     }
 
     fn render_pin_partition_settings(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
         // Row 1: CPU Limit DC & Battery Care 80%
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("1. 🔋 Giới hạn xung CPU khi dùng pin").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("80%").size(9.5)).clicked() {
-                            self.cpu_limit_dc = 80;
-                            let _ = set_cpu_max_state_dc(80);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                if ui.add(egui::Slider::new(&mut self.cpu_limit_dc, 50..=100).suffix("%")).changed() {
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_slider_chip(
+                    ui,
+                    &p,
+                    "1. 🔋 Giới hạn xung CPU khi dùng pin",
+                    "Hạn chế công suất khi rút sạc để kéo dài thời lượng pin",
+                    &mut self.cpu_limit_dc,
+                    50..=100,
+                    "%",
+                    Some(("80%", 80)),
+                ) {
                     let _ = set_cpu_max_state_dc(self.cpu_limit_dc);
                     self.sync_config();
                 }
-                ui.label(RichText::new("Hạn chế công suất khi rút sạc để kéo dài thời lượng pin").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("2. 🛡️ Khóa sạc 80% bảo vệ pin").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.protection.battery_threshold_enabled) {
-                            let st = self.protection.battery_threshold_enabled;
-                            let _ = set_battery_threshold(st, 80);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Chống chai pin và phồng cell lithium khi cắm sạc liên tục").size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "2. 🛡️ Khóa sạc 80% bảo vệ pin",
+                    "Chống chai pin và phồng cell lithium khi cắm sạc liên tục",
+                    &mut self.protection.battery_threshold_enabled,
+                    None,
+                ) {
+                    let st = self.protection.battery_threshold_enabled;
+                    let _ = set_battery_threshold(st, 80);
+                    self.sync_config();
+                }
+            },
+        );
 
         // Row 2: Brightness & Cooling Policy
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("3. 💡 Độ sáng màn hình LED").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("45% Pin").size(9.5)).clicked() {
-                            self.brightness_level = 45;
-                            let _ = set_brightness(45);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                if ui.add(egui::Slider::new(&mut self.brightness_level, 10..=100).suffix("%")).changed() {
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_slider_chip(
+                    ui,
+                    &p,
+                    "3. 💡 Độ sáng màn hình LED",
+                    "Tiết kiệm 30-50% điện năng tiêu thụ từ tấm nền màn hình",
+                    &mut self.brightness_level,
+                    10..=100,
+                    "%",
+                    Some(("45% Pin", 45)),
+                ) {
                     let _ = set_brightness(self.brightness_level);
                     self.sync_config();
                 }
-                ui.label(RichText::new("Tiết kiệm 30-50% điện năng tiêu thụ từ tấm nền màn hình").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("4. ❄️ Chế độ quạt tản nhiệt").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch_custom(ui, &mut self.cooling_active, "● Active (Mát)", "○ Passive (Êm)") {
-                            let _ = set_cooling_policy(self.cooling_active);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Active: Làm mát tối đa khi tải nặng • Passive: 0dB tĩnh lặng").size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "4. ❄️ Chế độ quạt tản nhiệt",
+                    "Active: Làm mát tối đa khi tải nặng • Passive: 0dB tĩnh lặng",
+                    &mut self.cooling_active,
+                    Some(("● Active (Mát)", "○ Passive (Êm)")),
+                ) {
+                    let _ = set_cooling_policy(self.cooling_active);
+                    self.sync_config();
+                }
+            },
+        );
 
         // Row 3: Keep Awake & Hibernate
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("5. ☕ Giữ máy luôn thức").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut is_keep_awake = self.keep_awake_mode == 2;
-                        if render_switch_custom(ui, &mut is_keep_awake, "● Chống Sleep", "○ Sleep OS") {
-                            self.keep_awake_mode = if is_keep_awake { 2 } else { 0 };
-                            set_keep_awake(self.keep_awake_mode);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Ngăn tắt màn hình và ngủ máy khi đang tải tệp hoặc render").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("6. 💤 Ngủ đông không hao pin").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.protection.is_hibernate_enabled) {
-                            if self.protection.is_hibernate_enabled {
-                                let _ = enable_hibernate_as_admin();
-                            }
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Lưu phiên làm việc vào ổ đĩa và ngắt điện (Hibernate)").size(9.5).color(p.text_secondary));
-            });
-        });
+        render_settings_row!(
+            ui,
+            |ui| {
+                let mut is_keep_awake = self.keep_awake_mode == 2;
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "5. ☕ Giữ máy luôn thức",
+                    "Ngăn tắt màn hình và ngủ máy khi đang tải tệp hoặc render",
+                    &mut is_keep_awake,
+                    Some(("● Chống Sleep", "○ Sleep OS")),
+                ) {
+                    self.keep_awake_mode = if is_keep_awake { 2 } else { 0 };
+                    set_keep_awake(self.keep_awake_mode);
+                    self.sync_config();
+                }
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "6. 💤 Ngủ đông không hao pin",
+                    "Lưu phiên làm việc vào ổ đĩa và ngắt điện (Hibernate)",
+                    &mut self.protection.is_hibernate_enabled,
+                    None,
+                ) {
+                    if self.protection.is_hibernate_enabled {
+                        let _ = enable_hibernate_as_admin();
+                    }
+                }
+            },
+        );
     }
 
     fn render_drive_partition_settings(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
         // Row 1: SysMain & NTFS DisableLastAccess
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("1. ⚡ Tắt dịch vụ SysMain").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch_custom(ui, &mut self.sysmain_disabled, "● TẮT (SSD)", "○ BẬT (HDD)") {
-                            crate::power::set_sysmain_service(!self.sysmain_disabled);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Tránh đọc ghi ngầm liên tục làm giảm tuổi thọ cell flash SSD").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("2. 📝 Tắt ghi nhật ký truy cập").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.disable_ntfs_last_access) {
-                            crate::power::set_ntfs_last_access(self.disable_ntfs_last_access);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Bỏ ghi ngày giờ truy cập file, giảm 30% I/O đĩa (NTFS LastAccess)").size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "1. ⚡ Tắt dịch vụ SysMain",
+                    "Tránh đọc ghi ngầm liên tục làm giảm tuổi thọ cell flash SSD",
+                    &mut self.sysmain_disabled,
+                    Some(("● TẮT (SSD)", "○ BẬT (HDD)")),
+                ) {
+                    crate::power::set_sysmain_service(!self.sysmain_disabled);
+                    self.sync_config();
+                }
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "2. 📝 Tắt ghi nhật ký truy cập",
+                    "Bỏ ghi ngày giờ truy cập file, giảm 30% I/O đĩa (NTFS LastAccess)",
+                    &mut self.disable_ntfs_last_access,
+                    None,
+                ) {
+                    crate::power::set_ntfs_last_access(self.disable_ntfs_last_access);
+                    self.sync_config();
+                }
+            },
+        );
 
         // Row 2: NTFS Disable8dot3 & SSD TRIM
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("3. 🚀 Tắt tạo tên tệp ngắn DOS 8.3").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.disable_8dot3_name) {
-                            crate::power::set_ntfs_8dot3_name(self.disable_8dot3_name);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Bỏ định dạng DOS 8.3 cổ xưa, tăng tốc duyệt và tạo file NTFS").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("4. 🧹 Kích hoạt SSD TRIM tự động").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.trim_enabled) {
-                            crate::power::set_ssd_trim(self.trim_enabled);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Chủ động thu hồi khối nhớ SSD đã xóa, duy trì tốc độ đọc ghi").size(9.5).color(p.text_secondary));
-            });
-        });
-        ui.add_space(4.0);
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "3. 🚀 Tắt tạo tên tệp ngắn DOS 8.3",
+                    "Bỏ định dạng DOS 8.3 cổ xưa, tăng tốc duyệt và tạo file NTFS",
+                    &mut self.disable_8dot3_name,
+                    None,
+                ) {
+                    crate::power::set_ntfs_8dot3_name(self.disable_8dot3_name);
+                    self.sync_config();
+                }
+            },
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "4. 🧹 Kích hoạt SSD TRIM tự động",
+                    "Chủ động thu hồi khối nhớ SSD đã xóa, duy trì tốc độ đọc ghi",
+                    &mut self.trim_enabled,
+                    None,
+                ) {
+                    crate::power::set_ssd_trim(self.trim_enabled);
+                    self.sync_config();
+                }
+            },
+        );
 
         // Row 3: WaitToKill & Junk Clean Tier 1
-        ui.columns(2, |cols| {
-            render_chip_frame(&mut cols[0], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("5. ⏱️ Rút ngắn thời gian tắt máy").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if render_switch(ui, &mut self.wait_to_kill_service) {
-                            crate::power::set_wait_to_kill_service(self.wait_to_kill_service);
-                            self.sync_config();
-                        }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Giảm thời gian chờ tắt service từ 12s còn 2s (WaitToKill)").size(9.5).color(p.text_secondary));
-            });
-
-            render_chip_frame(&mut cols[1], p.is_dark, p.card_border, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("6. 🗑️ Dọn dẹp rác hệ thống Tầng 1").size(11.0).strong().color(p.text_primary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("⚡ Dọn sạch ngay").size(9.5)).clicked() {
-                            let targets = get_default_targets();
-                            let mut freed = 0u64;
-                            for target in &targets {
-                                if target.tier == CleanTier::Safe {
-                                    let (f, _) = clean_target(target);
-                                    freed += f;
-                                }
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "5. ⏱️ Rút ngắn thời gian tắt máy",
+                    "Giảm thời gian chờ tắt service từ 12s còn 2s (WaitToKill)",
+                    &mut self.wait_to_kill_service,
+                    None,
+                ) {
+                    crate::power::set_wait_to_kill_service(self.wait_to_kill_service);
+                    self.sync_config();
+                }
+            },
+            |ui| {
+                render_action_chip(
+                    ui,
+                    &p,
+                    "6. 🗑️ Dọn dẹp rác hệ thống Tầng 1",
+                    "Xóa an toàn cache Temp, Prefetch, Log và Thumbnail",
+                    "⚡ Dọn sạch ngay",
+                    || {
+                        let targets = get_default_targets();
+                        let mut freed = 0u64;
+                        for target in &targets {
+                            if target.tier == CleanTier::Safe {
+                                let (f, _) = clean_target(target);
+                                freed += f;
                             }
-                            self.criteria_apply_msg = format!("✓ Đã dọn sạch {} rác an toàn.", format_bytes(freed));
                         }
-                    });
-                });
-                ui.add_space(2.0);
-                ui.label(RichText::new("Xóa an toàn cache Temp, Prefetch, Log và Thumbnail").size(9.5).color(p.text_secondary));
-            });
-        });
+                        self.criteria_apply_msg =
+                            format!("✓ Đã dọn sạch {} rác an toàn.", format_bytes(freed));
+                    },
+                );
+            },
+        );
     }
 
     fn render_cleaner_section(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
         ui.horizontal(|ui| {
-            let scan_btn = egui::Button::new(RichText::new("Quét toàn bộ").size(12.0).color(Color32::WHITE))
+            let scan_btn = egui::Button::new(RichText::new("Quét toàn bộ").size(13.0).color(Color32::WHITE))
                 .fill(p.primary_btn);
             if ui.add(scan_btn).clicked() {
                 let targets = get_default_targets();
@@ -2380,7 +2613,7 @@ impl OptimizerApp {
                 self.clean_status_msg = format!("✓ Quét xong: Tìm thấy {}.", format_bytes(total_size));
             }
 
-            let clean_safe_btn = egui::Button::new(RichText::new("Dọn Rác Tầng 1").size(12.0).color(Color32::WHITE))
+            let clean_safe_btn = egui::Button::new(RichText::new("Dọn Rác Tầng 1").size(13.0).color(Color32::WHITE))
                 .fill(Color32::from_rgb(16, 120, 60));
             if ui.add(clean_safe_btn).clicked() {
                 let targets = get_default_targets();
@@ -2400,7 +2633,7 @@ impl OptimizerApp {
                 "★ [PRO] Dọn Dev Cache"
             };
 
-            let clean_dev_btn = egui::Button::new(RichText::new(dev_btn_text).size(12.0).color(Color32::WHITE))
+            let clean_dev_btn = egui::Button::new(RichText::new(dev_btn_text).size(13.0).color(Color32::WHITE))
                 .fill(if self.license.is_valid { Color32::from_rgb(147, 51, 234) } else { p.warn_amber });
 
             if ui.add(clean_dev_btn).clicked() {
@@ -2424,7 +2657,7 @@ impl OptimizerApp {
 
         if !self.clean_status_msg.is_empty() {
             ui.add_space(2.0);
-            ui.label(RichText::new(&self.clean_status_msg).size(11.5).color(p.accent_blue));
+            ui.label(RichText::new(&self.clean_status_msg).size(12.5).color(p.accent_blue));
         }
 
         ui.add_space(6.0);
@@ -2432,15 +2665,15 @@ impl OptimizerApp {
         // Process search and actions
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("DANH SÁCH TIẾN TRÌNH").size(11.5).strong().color(p.accent_blue));
+                ui.label(RichText::new("DANH SÁCH TIẾN TRÌNH").size(13.0).strong().color(p.accent_blue));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(egui::TextEdit::singleline(&mut self.process_search_query).hint_text("Lọc app...").desired_width(120.0));
+                    ui.add(egui::TextEdit::singleline(&mut self.process_search_query).hint_text("Lọc app...").desired_width(140.0));
                 });
             });
 
             if !self.process_action_msg.is_empty() {
                 ui.add_space(2.0);
-                ui.label(RichText::new(&self.process_action_msg).size(11.0).color(p.success_green));
+                ui.label(RichText::new(&self.process_action_msg).size(12.2).color(p.success_green));
             }
 
             ui.separator();
@@ -2456,21 +2689,21 @@ impl OptimizerApp {
                 .take(8)
                 .collect();
 
-            egui::Grid::new("adv_proc_grid").striped(true).spacing(Vec2::new(8.0, 4.0)).show(ui, |ui| {
-                ui.label(RichText::new("Ứng dụng").size(11.0).strong().color(p.text_secondary));
-                ui.label(RichText::new("RAM").size(11.0).strong().color(p.text_secondary));
-                ui.label(RichText::new("Thao tác").size(11.0).strong().color(p.text_secondary));
+            egui::Grid::new("adv_proc_grid").striped(true).spacing(Vec2::new(8.0, 5.0)).show(ui, |ui| {
+                ui.label(RichText::new("Ứng dụng").size(12.5).strong().color(p.text_secondary));
+                ui.label(RichText::new("RAM").size(12.5).strong().color(p.text_secondary));
+                ui.label(RichText::new("Thao tác").size(12.5).strong().color(p.text_secondary));
                 ui.end_row();
 
                 for proc in filtered_procs {
-                    ui.label(RichText::new(&proc.name).size(11.0).strong().color(p.text_primary));
-                    ui.label(RichText::new(format_bytes(proc.memory_bytes)).size(11.0).color(p.accent_blue));
+                    ui.label(RichText::new(&proc.name).size(12.5).strong().color(p.text_primary));
+                    ui.label(RichText::new(format_bytes(proc.memory_bytes)).size(12.5).color(p.accent_blue));
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Dọn").size(10.0)).clicked() {
+                        if ui.button(RichText::new("Dọn").size(11.5)).clicked() {
                             let f = trim_single_process(proc.pid);
                             self.process_action_msg = format!("✓ Thu hồi {} từ '{}'", format_bytes(f), proc.name);
                         }
-                        if ui.add(egui::Button::new(RichText::new("Tắt").size(10.0).color(p.danger_red))).clicked() {
+                        if ui.add(egui::Button::new(RichText::new("Tắt").size(11.5).color(p.danger_red))).clicked() {
                             let _ = terminate_process(proc.pid);
                             self.process_action_msg = format!("✓ Kết thúc '{}'", proc.name);
                         }
@@ -2487,9 +2720,9 @@ impl OptimizerApp {
         // Startup apps toggle
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("ỨNG DỤNG KHỞI ĐỘNG CÙNG WINDOWS").size(11.5).strong().color(p.accent_blue));
+                ui.label(RichText::new("ỨNG DỤNG KHỞI ĐỘNG CÙNG WINDOWS").size(13.0).strong().color(p.accent_blue));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(RichText::new("Làm mới").size(11.0)).clicked() {
+                    if ui.button(RichText::new("Làm mới").size(12.0)).clicked() {
                         self.startup_apps = get_startup_apps();
                     }
                 });
@@ -2497,18 +2730,18 @@ impl OptimizerApp {
 
             if !self.startup_action_msg.is_empty() {
                 ui.add_space(2.0);
-                ui.label(RichText::new(&self.startup_action_msg).size(11.0).color(p.success_green));
+                ui.label(RichText::new(&self.startup_action_msg).size(12.2).color(p.success_green));
             }
 
             ui.separator();
 
             for app in &mut self.startup_apps {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(&app.name).size(11.0).strong().color(p.text_primary));
+                    ui.label(RichText::new(&app.name).size(12.5).strong().color(p.text_primary));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let btn_text = if app.is_enabled { "Tắt" } else { "Bật" };
                         let btn_col = if app.is_enabled { p.danger_red } else { p.primary_btn };
-                        if ui.add(egui::Button::new(RichText::new(btn_text).size(10.0).color(Color32::WHITE)).fill(btn_col)).clicked() {
+                        if ui.add(egui::Button::new(RichText::new(btn_text).size(11.5).color(Color32::WHITE)).fill(btn_col)).clicked() {
                             let new_st = !app.is_enabled;
                             if toggle_startup_item(&app.name, &app.location, new_st) {
                                 app.is_enabled = new_st;
@@ -2526,13 +2759,13 @@ impl OptimizerApp {
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("WINDOWS DIAGTRACK TELEMETRY").size(11.5).strong().color(p.accent_blue));
-                    ui.label(RichText::new("Chặn thu thập dữ liệu ngầm của Microsoft.").size(10.5).color(p.text_secondary));
+                    ui.label(RichText::new("WINDOWS DIAGTRACK TELEMETRY").size(13.0).strong().color(p.accent_blue));
+                    ui.label(RichText::new("Chặn thu thập dữ liệu ngầm của Microsoft.").size(12.0).color(p.text_secondary));
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_t = if self.is_telemetry_running { "Tắt DiagTrack" } else { "Bật DiagTrack" };
                     let btn_c = if self.is_telemetry_running { p.danger_red } else { Color32::from_rgb(16, 120, 60) };
-                    if ui.add(egui::Button::new(RichText::new(btn_t).size(10.5).color(Color32::WHITE)).fill(btn_c)).clicked() {
+                    if ui.add(egui::Button::new(RichText::new(btn_t).size(12.0).color(Color32::WHITE)).fill(btn_c)).clicked() {
                         let _ = toggle_telemetry(self.is_telemetry_running);
                         self.is_telemetry_running = !self.is_telemetry_running;
                     }
@@ -2545,19 +2778,21 @@ impl OptimizerApp {
         let p = self.palette;
 
         p.modern_card(ui, |ui| {
-            ui.label(RichText::new("CƠ CHẾ LƯU VĨNH VIỄN & ĐÓNG ỨNG DỤNG").size(11.5).strong().color(p.accent_blue));
+            ui.label(RichText::new("CƠ CHẾ LƯU VĨNH VIỄN & ĐÓNG ỨNG DỤNG").size(13.0).strong().color(p.accent_blue));
             ui.add_space(4.0);
 
             // Ghi vĩnh viễn
             ui.horizontal(|ui| {
-                ui.label(RichText::new("🔒 Trạng thái lưu:").size(11.5).strong().color(p.text_primary));
-                ui.label(RichText::new("Đã ghi trực tiếp vào Windows (Registry & Powercfg)").size(11.5).color(p.success_green));
+                ui.label(RichText::new("🔒 Trạng thái lưu:").size(12.5).strong().color(p.text_primary));
+                ui.label(RichText::new("Đã ghi trực tiếp vào Windows (Registry & Powercfg)").size(12.5).color(p.success_green));
             });
-            ui.label(RichText::new("Mọi thông số (Xung CPU, Chống Sleep, Timer 1.0ms, GameDVR, Telemetry) đều được ghi vĩnh viễn vào hệ điều hành. Khi bạn TẮT HẲN OmniTune, Windows vẫn giữ nguyên 100% các thiết lập này.").size(10.5).color(p.text_secondary));
+            ui.label(RichText::new("Mọi thông số (Xung CPU, Chống Sleep, Timer 1.0ms, GameDVR, Telemetry) đều được ghi vĩnh viễn vào hệ điều hành. Khi bạn TẮT HẲN OmniTune, Windows vẫn giữ nguyên 100% các thiết lập này.").size(12.0).color(p.text_secondary));
 
             ui.add_space(6.0);
-            let apply_btn = egui::Button::new(RichText::new("⚡ Áp dụng & Ép ghi vĩnh viễn vào Windows").size(11.0).strong().color(Color32::WHITE))
-                .fill(p.primary_btn);
+            let apply_btn = egui::Button::new(RichText::new("⚡ Áp dụng & Ép ghi vĩnh viễn vào Windows").size(12.5).strong().color(Color32::WHITE))
+                .fill(p.primary_btn)
+                .min_size(Vec2::new(0.0, 36.0))
+                .corner_radius(CornerRadius::same(6));
             if ui.add(apply_btn).clicked() {
                 self.apply_all_criteria();
             }
@@ -2567,17 +2802,17 @@ impl OptimizerApp {
             ui.add_space(6.0);
 
             // Toggle Minimize to tray
-            if ui.checkbox(&mut self.config.minimize_to_tray, RichText::new("Thu nhỏ xuống khay hệ thống thay vì tắt hẳn khi bấm [X]").size(11.5).color(p.text_primary)).changed() {
+            if ui.checkbox(&mut self.config.minimize_to_tray, RichText::new("Thu nhỏ xuống khay hệ thống thay vì tắt hẳn khi bấm [X]").size(12.5).color(p.text_primary)).changed() {
                 self.sync_config();
             }
-            ui.label(RichText::new("💡 Mặc định TẮT: Bấm [X] sẽ tắt ứng dụng hoàn toàn mà không cần chạy ngầm (các thông số Windows vẫn có hiệu lực). BẬT nếu bạn muốn app chạy ngầm ở góc đồng hồ.").size(10.5).color(p.text_secondary));
+            ui.label(RichText::new("💡 Mặc định TẮT: Bấm [X] sẽ tắt ứng dụng hoàn toàn mà không cần chạy ngầm (các thông số Windows vẫn có hiệu lực). BẬT nếu bạn muốn app chạy ngầm ở góc đồng hồ.").size(12.0).color(p.text_secondary));
 
             ui.add_space(6.0);
             ui.separator();
             ui.add_space(6.0);
 
             // Toggle Run on Startup
-            if ui.checkbox(&mut self.run_on_startup, RichText::new("Khởi động ngầm cùng Windows").size(11.5).color(p.text_primary)).changed() {
+            if ui.checkbox(&mut self.run_on_startup, RichText::new("Khởi động ngầm cùng Windows").size(12.5).color(p.text_primary)).changed() {
                 let ok = set_autostart_registry(self.run_on_startup);
                 if ok {
                     self.config.run_on_startup = self.run_on_startup;
@@ -2595,10 +2830,11 @@ impl OptimizerApp {
             ui.add_space(6.0);
 
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Tắt ứng dụng:").size(11.0).color(p.text_secondary));
+                ui.label(RichText::new("Tắt ứng dụng:").size(12.5).color(p.text_secondary));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let exit_btn = egui::Button::new(RichText::new("Đóng OmniTune").size(11.0).color(Color32::WHITE))
-                        .fill(p.danger_red);
+                    let exit_btn = egui::Button::new(RichText::new("Đóng OmniTune").size(12.0).color(Color32::WHITE))
+                        .fill(p.danger_red)
+                        .corner_radius(CornerRadius::same(6));
                     if ui.add(exit_btn).clicked() {
                         std::process::exit(0);
                     }
