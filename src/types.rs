@@ -58,6 +58,7 @@ pub struct StartupAppItem {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ActivityEvent {
     pub time: String,
     pub icon: &'static str,

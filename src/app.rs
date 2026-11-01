@@ -1629,35 +1629,6 @@ impl OptimizerApp {
 
         ui.add_space(8.0);
 
-        // --- AUTONOMOUS ACTIVITY STREAM (NHẬT KÝ TỰ HÀNH - HIGH CONTRAST & WRAPPED) ---
-        p.modern_card(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("[LIVE] NHẬT KÝ TỰ ĐỘNG CHẠY NGẦM")
-                        .size(13.0)
-                        .strong()
-                        .color(p.accent_blue),
-                );
-            });
-            ui.separator();
-            ui.add_space(2.0);
-
-            if self.autonomous.activity_log.is_empty() {
-                ui.label(RichText::new("Đang theo dõi ngữ cảnh...").size(12.2).color(p.text_secondary));
-            } else {
-                for ev in self.autonomous.activity_log.iter().take(5) {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(&ev.time).size(11.8).color(p.text_secondary));
-                        ui.label(RichText::new(ev.icon).size(12.5).strong().color(p.accent_blue));
-                        ui.label(RichText::new(&ev.message).size(12.2).color(p.text_primary));
-                    });
-                    ui.add_space(2.0);
-                }
-            }
-        });
-
-        ui.add_space(8.0);
-
         // --- THIẾT LẬP HỆ THỐNG & KHỞI ĐỘNG (SYSTEM SETTINGS) ---
         p.modern_card(ui, |ui| {
             ui.horizontal(|ui| {
