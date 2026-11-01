@@ -1472,13 +1472,6 @@ impl OptimizerApp {
 
         ui.add_space(8.0);
 
-        // --- 4 PHÂN VÙNG TỐI ƯU HỆ THỐNG (CPU • RAM • PIN • DRIVE) ---
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("4 PHÂN VÙNG TỐI ƯU HỆ THỐNG").size(typography::SECTION_TITLE).strong().color(p.accent_blue));
-            ui.label(RichText::new("(Bấm vào phân vùng để xem chi tiết & tinh chỉnh)").size(12.0).color(p.text_secondary));
-        });
-        ui.add_space(2.0);
-
         // Row 1: CPU (Col 0) & RAM (Col 1)
         let is_cpu = self.selected_partition == Some(PartitionTab::Cpu);
         let is_ram = self.selected_partition == Some(PartitionTab::Ram);
