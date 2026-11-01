@@ -1552,7 +1552,7 @@ impl OptimizerApp {
             pin_clicked = render_partition_card(
                 &mut cols[0],
                 &p,
-                "🔋 PIN / NGUỒN",
+                "🔋 PIN",
                 6,
                 is_pin,
                 |ui| {
@@ -1593,7 +1593,7 @@ impl OptimizerApp {
             drv_clicked = render_partition_card(
                 &mut cols[1],
                 &p,
-                "💾 Ổ ĐĨA / DRIVE",
+                "💾 DRIVE",
                 6,
                 is_drv,
                 |ui| {
