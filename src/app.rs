@@ -1403,7 +1403,7 @@ impl OptimizerApp {
             ui.columns(2, |cols| {
                 // Cột 1: Mô tả và nút click (Center)
                 cols[0].vertical_centered(|ui| {
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
                     if let Some(tip) = tips.first() {
                         ui.label(
                             RichText::new(format!("💡 {}", tip))
@@ -1418,7 +1418,55 @@ impl OptimizerApp {
                         );
                     }
 
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
+
+                    // 5 nút thiết lập & chế độ tự hành
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.checkbox(
+                            &mut self.autonomous.auto_pilot_enabled,
+                            RichText::new("Auto-Pilot").size(12.0).strong().color(p.success_green),
+                        ).changed() {
+                            self.sync_config();
+                        }
+                        ui.add_space(8.0);
+                        if ui.checkbox(
+                            &mut self.autonomous.auto_ram_enabled,
+                            RichText::new("Auto-RAM").size(12.0).strong().color(p.accent_blue),
+                        ).changed() {
+                            self.sync_config();
+                        }
+                        ui.add_space(8.0);
+                        if ui.checkbox(
+                            &mut self.autonomous.eco_qos_enabled,
+                            RichText::new("EcoQoS").size(12.0).strong().color(p.accent_blue),
+                        ).changed() {
+                            self.sync_config();
+                        }
+                    });
+
+                    ui.add_space(3.0);
+
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.checkbox(
+                            &mut self.run_on_startup,
+                            RichText::new("Khởi động cùng Windows").size(12.0).color(p.text_primary),
+                        ).changed() {
+                            let ok = set_autostart_registry(self.run_on_startup);
+                            if ok {
+                                self.config.run_on_startup = self.run_on_startup;
+                                self.sync_config();
+                            }
+                        }
+                        ui.add_space(10.0);
+                        if ui.checkbox(
+                            &mut self.config.minimize_to_tray,
+                            RichText::new("Thu nhỏ vào khay [X]").size(12.0).color(p.text_primary),
+                        ).changed() {
+                            self.sync_config();
+                        }
+                    });
+
+                    ui.add_space(6.0);
 
                     let opt_btn = egui::Button::new(
                         RichText::new("► TỐI ƯU HÓA TOÀN DIỆN (1-CLICK)")
@@ -1626,53 +1674,6 @@ impl OptimizerApp {
             ui.add_space(8.0);
             self.render_partition_unified_view(ui, active);
         }
-
-        ui.add_space(8.0);
-
-        // --- THIẾT LẬP HỆ THỐNG & KHỞI ĐỘNG (SYSTEM SETTINGS) ---
-        p.modern_card(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("⚙ THIẾT LẬP HỆ THỐNG & KHỞI ĐỘNG").size(13.0).strong().color(p.accent_blue));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.checkbox(
-                        &mut self.autonomous.auto_pilot_enabled,
-                        RichText::new("Auto-Pilot").size(12.5).strong().color(p.success_green),
-                    ).changed() {
-                        self.sync_config();
-                    }
-                    ui.add_space(6.0);
-                    if ui.checkbox(
-                        &mut self.autonomous.auto_ram_enabled,
-                        RichText::new("Auto-RAM").size(12.5).strong().color(p.accent_blue),
-                    ).changed() {
-                        self.sync_config();
-                    }
-                    ui.add_space(6.0);
-                    if ui.checkbox(
-                        &mut self.autonomous.eco_qos_enabled,
-                        RichText::new("EcoQoS").size(12.5).strong().color(p.accent_blue),
-                    ).changed() {
-                        self.sync_config();
-                    }
-                });
-            });
-            ui.separator();
-            ui.add_space(4.0);
-
-            ui.horizontal_wrapped(|ui| {
-                if ui.checkbox(&mut self.run_on_startup, RichText::new("Khởi động ngầm cùng Windows").size(12.5).color(p.text_primary)).changed() {
-                    let ok = set_autostart_registry(self.run_on_startup);
-                    if ok {
-                        self.config.run_on_startup = self.run_on_startup;
-                        self.sync_config();
-                    }
-                }
-                ui.add_space(16.0);
-                if ui.checkbox(&mut self.config.minimize_to_tray, RichText::new("Thu nhỏ vào khay hệ thống khi bấm [X]").size(12.5).color(p.text_primary)).changed() {
-                    self.sync_config();
-                }
-            });
-        });
     }
 
     // =========================================================================
