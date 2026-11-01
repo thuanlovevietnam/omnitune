@@ -19,6 +19,10 @@ fn default_brightness() -> u32 {
     80
 }
 
+fn default_ram_threshold() -> u32 {
+    80
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub timer_1ms_enabled: bool,
@@ -41,6 +45,16 @@ pub struct AppConfig {
     pub auto_ram_enabled: bool,
     #[serde(default = "default_brightness")]
     pub brightness_level: u32,
+    #[serde(default = "default_ram_threshold")]
+    pub ram_trim_threshold_pct: u32,
+    #[serde(default = "default_true")]
+    pub sysmain_disabled: bool,
+    #[serde(default = "default_true")]
+    pub disable_ntfs_last_access: bool,
+    #[serde(default = "default_true")]
+    pub mmcss_optimized: bool,
+    #[serde(default = "default_true")]
+    pub tcp_autotuning: bool,
 }
 
 impl Default for AppConfig {
@@ -61,6 +75,11 @@ impl Default for AppConfig {
             eco_qos_enabled: true,
             auto_ram_enabled: true,
             brightness_level: 80,
+            ram_trim_threshold_pct: 80,
+            sysmain_disabled: true,
+            disable_ntfs_last_access: true,
+            mmcss_optimized: true,
+            tcp_autotuning: true,
         }
     }
 }

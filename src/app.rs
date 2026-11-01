@@ -89,6 +89,14 @@ pub struct OptimizerApp {
     // Power settings
     brightness_level: u32,
 
+    // Storage, Network & System Tuning
+    ram_trim_threshold_pct: u32,
+    sysmain_disabled: bool,
+    disable_ntfs_last_access: bool,
+    mmcss_optimized: bool,
+    tcp_autotuning: bool,
+    criteria_apply_msg: String,
+
     // Licensing state
     license: LicenseData,
     show_license_modal: bool,
@@ -149,6 +157,18 @@ impl OptimizerApp {
         }
         if config.brightness_level > 0 {
             let _ = set_brightness(config.brightness_level);
+        }
+        if config.sysmain_disabled {
+            crate::power::set_sysmain_service(false);
+        }
+        if config.disable_ntfs_last_access {
+            crate::power::set_ntfs_last_access(true);
+        }
+        if config.mmcss_optimized {
+            crate::power::set_mmcss_gaming_responsiveness(true);
+        }
+        if config.tcp_autotuning {
+            crate::power::set_tcp_optimization(true);
         }
 
         // Apply permanent OS responsiveness tweaks
@@ -235,7 +255,8 @@ impl OptimizerApp {
             }));
         });
 
-        let hw = crate::hardware_profile::HardwareProfile::detect(&mut sys);
+        let mut hw = crate::hardware_profile::HardwareProfile::detect(&mut sys);
+        hw.dynamic_ram_threshold_pct = config.ram_trim_threshold_pct;
         let mut autonomous = AutonomousEngine::new(
             hw.clone(),
             config.operating_mode,
@@ -310,6 +331,12 @@ impl OptimizerApp {
             cooling_active: config.cooling_active,
             gamedvr_enabled: config.gamedvr_enabled,
             brightness_level: config.brightness_level,
+            ram_trim_threshold_pct: config.ram_trim_threshold_pct,
+            sysmain_disabled: config.sysmain_disabled,
+            disable_ntfs_last_access: config.disable_ntfs_last_access,
+            mmcss_optimized: config.mmcss_optimized,
+            tcp_autotuning: config.tcp_autotuning,
+            criteria_apply_msg: String::new(),
             license,
             show_license_modal: false,
             input_license_email: String::new(),
@@ -341,9 +368,58 @@ impl OptimizerApp {
         self.config.eco_qos_enabled = self.autonomous.eco_qos_enabled;
         self.config.auto_ram_enabled = self.autonomous.auto_ram_enabled;
         self.config.brightness_level = self.brightness_level;
+        self.config.ram_trim_threshold_pct = self.ram_trim_threshold_pct;
+        self.config.sysmain_disabled = self.sysmain_disabled;
+        self.config.disable_ntfs_last_access = self.disable_ntfs_last_access;
+        self.config.mmcss_optimized = self.mmcss_optimized;
+        self.config.tcp_autotuning = self.tcp_autotuning;
         self.config.battery_threshold_80 = self.protection.battery_threshold_enabled;
         self.config.run_on_startup = self.run_on_startup;
         save_config(&self.config);
+    }
+
+    pub fn apply_all_criteria(&mut self) {
+        // 1. Giới hạn xung CPU & TDP
+        let _ = set_cpu_max_state_ac(self.cpu_limit_ac);
+        let _ = set_cpu_max_state_dc(self.cpu_limit_dc);
+
+        // 2. High Precision Timer (1.0ms vs 15.6ms)
+        set_timer_resolution_1ms(self.timer_1ms_enabled);
+
+        // 3. Độ sáng Panel màn hình
+        if self.brightness_level > 0 {
+            let _ = set_brightness(self.brightness_level);
+        }
+
+        // 4. Chính sách quạt làm mát (Passive vs Active)
+        let _ = set_cooling_policy(self.cooling_active);
+
+        // 5. GameDVR & Chế độ Chống Sleep
+        let _ = set_gamedvr(self.gamedvr_enabled);
+        set_keep_awake(self.keep_awake_mode);
+
+        // 6. Ngưỡng sạc Pin 80% & Hibernate
+        let _ = set_battery_threshold(self.protection.battery_threshold_enabled, 80);
+
+        // 7. Dynamic RAM Trim Threshold
+        self.autonomous.hardware_profile.dynamic_ram_threshold_pct = self.ram_trim_threshold_pct;
+
+        // 8. Ổ đĩa: SysMain & NTFS Last Access
+        crate::power::set_sysmain_service(!self.sysmain_disabled);
+        crate::power::set_ntfs_last_access(self.disable_ntfs_last_access);
+
+        // 9. MMCSS Gaming Responsiveness
+        crate::power::set_mmcss_gaming_responsiveness(self.mmcss_optimized);
+
+        // 10. TCP Auto-Tuning & Quantum Priority Separation
+        crate::power::set_tcp_optimization(self.tcp_autotuning);
+        crate::power::apply_permanent_windows_system_tweaks();
+
+        self.sync_config();
+        let msg = "✓ Đã áp dụng toàn bộ 10 thông số tối ưu vào hệ điều hành!".to_string();
+        self.criteria_apply_msg = msg.clone();
+        self.quick_opt_msg = msg;
+        self.autonomous.log("[CÀI ĐẶT]", "Đã áp dụng và ghi thành công 10 thông số tối ưu vào Windows.".to_string());
     }
 
     fn calculate_health_score(&self) -> (u32, &'static str, Color32, Vec<String>) {
@@ -915,7 +991,7 @@ impl OptimizerApp {
                                     for m in msgs {
                                         self.autonomous.log("[ÁP DỤNG]", m);
                                     }
-                                    self.sync_config();
+                                    self.apply_all_criteria();
                                 }
                             });
                         });
@@ -1479,7 +1555,126 @@ impl OptimizerApp {
                         ui.label(RichText::new("💡 Bật ngưỡng 80% khi cắm sạc bàn làm việc; Dùng Hibernate thay vì Sleep S3.").size(10.5).color(p.text_secondary));
                     });
                     ui.end_row();
+
+                    // Row 7: Auto RAM Trim & Threshold
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("7. Tự động thu hồi RAM").size(12.0).strong().color(p.text_primary));
+                        ui.label(RichText::new(format!("Ngưỡng máy: {}% ({:.1}GB)", self.ram_trim_threshold_pct, self.autonomous.hardware_profile.ram_total_gb)).size(10.5).color(p.text_secondary));
+                    });
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            let auto_ram_text = if self.autonomous.auto_ram_enabled { "Tự động dọn: Bật" } else { "Tự động dọn: Tắt" };
+                            let auto_ram_col = if self.autonomous.auto_ram_enabled { Color32::from_rgb(16, 120, 60) } else { p.tab_inactive_bg };
+                            if ui.add(egui::Button::new(RichText::new(auto_ram_text).size(10.5).color(Color32::WHITE)).fill(auto_ram_col)).clicked() {
+                                self.autonomous.auto_ram_enabled = !self.autonomous.auto_ram_enabled;
+                                self.sync_config();
+                            }
+
+                            ui.label(RichText::new("Ngưỡng:").size(11.0).color(p.text_primary));
+                            if ui.add(egui::Slider::new(&mut self.ram_trim_threshold_pct, 60..=95).suffix("%")).changed() {
+                                self.autonomous.hardware_profile.dynamic_ram_threshold_pct = self.ram_trim_threshold_pct;
+                                self.sync_config();
+                            }
+
+                            if ui.button(RichText::new("Thu hồi ngay").size(10.5)).clicked() {
+                                let (freed, count) = trim_working_sets(&mut self.sys);
+                                self.criteria_apply_msg = format!("✓ Đã thu hồi {} từ {} tiến trình.", format_bytes(freed), count);
+                            }
+                        });
+                        ui.label(RichText::new(format!("💡 Tự động giải phóng Working Set khi RAM chạm {}% (máy {:.1}GB).", self.ram_trim_threshold_pct, self.autonomous.hardware_profile.ram_total_gb)).size(10.5).color(p.text_secondary));
+                    });
+                    ui.end_row();
+
+                    // Row 8: Storage SSD/HDD & SysMain
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("8. Ổ đĩa SSD/HDD & SysMain").size(12.0).strong().color(p.text_primary));
+                        ui.label(RichText::new(format!("Loại: {}", if self.autonomous.hardware_profile.is_ssd { "SSD Siêu tốc" } else { "HDD Cơ học" })).size(10.5).color(p.text_secondary));
+                    });
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            let sm_text = if self.sysmain_disabled { "SysMain: Đã Tắt (Chuẩn SSD)" } else { "SysMain: Bật" };
+                            let sm_col = if self.sysmain_disabled { Color32::from_rgb(16, 120, 60) } else { p.tab_inactive_bg };
+                            if ui.add(egui::Button::new(RichText::new(sm_text).size(10.5).color(Color32::WHITE)).fill(sm_col)).clicked() {
+                                self.sysmain_disabled = !self.sysmain_disabled;
+                                crate::power::set_sysmain_service(!self.sysmain_disabled);
+                                self.sync_config();
+                            }
+
+                            let ntfs_text = if self.disable_ntfs_last_access { "NTFS LastAccess: Tắt" } else { "NTFS LastAccess: Bật" };
+                            let ntfs_col = if self.disable_ntfs_last_access { Color32::from_rgb(16, 120, 60) } else { p.tab_inactive_bg };
+                            if ui.add(egui::Button::new(RichText::new(ntfs_text).size(10.5).color(Color32::WHITE)).fill(ntfs_col)).clicked() {
+                                self.disable_ntfs_last_access = !self.disable_ntfs_last_access;
+                                crate::power::set_ntfs_last_access(self.disable_ntfs_last_access);
+                                self.sync_config();
+                            }
+                        });
+                        ui.label(RichText::new("💡 Tắt SysMain và Last Access giúp giảm tải I/O ghi đĩa liên tục, tăng độ bền và tốc độ SSD.").size(10.5).color(p.text_secondary));
+                    });
+                    ui.end_row();
+
+                    // Row 9: Network & MMCSS Gaming Responsiveness
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("9. Trễ Mạng & MMCSS Gaming").size(12.0).strong().color(p.text_primary));
+                        ui.label(RichText::new("Multimedia & Network Throttling").size(10.5).color(p.text_secondary));
+                    });
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            let mmcss_text = if self.mmcss_optimized { "MMCSS Gaming Mode: Bật" } else { "MMCSS: Mặc định" };
+                            let mmcss_col = if self.mmcss_optimized { p.primary_btn } else { p.tab_inactive_bg };
+                            if ui.add(egui::Button::new(RichText::new(mmcss_text).size(10.5).color(Color32::WHITE)).fill(mmcss_col)).clicked() {
+                                self.mmcss_optimized = !self.mmcss_optimized;
+                                crate::power::set_mmcss_gaming_responsiveness(self.mmcss_optimized);
+                                self.sync_config();
+                            }
+                        });
+                        ui.label(RichText::new("💡 Dành 100% băng thông mạng cho tác vụ trực tiếp; triệt tiêu hoàn toàn giật ping & trễ âm thanh.").size(10.5).color(p.text_secondary));
+                    });
+                    ui.end_row();
+
+                    // Row 10: TCP Auto-Tuning & Priority Boost
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("10. TCP Auto-Tuning & Quantum Boost").size(12.0).strong().color(p.text_primary));
+                        ui.label(RichText::new("Win32PrioritySeparation 38").size(10.5).color(p.text_secondary));
+                    });
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            let tcp_text = if self.tcp_autotuning { "TCP Auto-Tuning: Normal" } else { "TCP Auto-Tuning: Tắt" };
+                            let tcp_col = if self.tcp_autotuning { Color32::from_rgb(16, 120, 60) } else { p.tab_inactive_bg };
+                            if ui.add(egui::Button::new(RichText::new(tcp_text).size(10.5).color(Color32::WHITE)).fill(tcp_col)).clicked() {
+                                self.tcp_autotuning = !self.tcp_autotuning;
+                                crate::power::set_tcp_optimization(self.tcp_autotuning);
+                                self.sync_config();
+                            }
+
+                            ui.label(RichText::new("Priority Boost: 38 (3x Quantum)").size(11.0).color(p.accent_blue));
+                        });
+                        ui.label(RichText::new("💡 Tối đa throughput đường truyền mạng TCP và trao quyền ưu tiên luồng xử lý CPU 3x cho app active.").size(10.5).color(p.text_secondary));
+                    });
+                    ui.end_row();
                 });
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                let apply_all_btn = egui::Button::new(
+                    RichText::new("⚡ ÁP DỤNG TOÀN BỘ 10 THÔNG SỐ VÀO CÀI ĐẶT & WINDOWS")
+                        .size(11.5)
+                        .strong()
+                        .color(Color32::WHITE),
+                )
+                .fill(p.primary_btn)
+                .corner_radius(CornerRadius::same(5));
+
+                if ui.add(apply_all_btn).clicked() {
+                    self.apply_all_criteria();
+                }
+
+                if !self.criteria_apply_msg.is_empty() {
+                    ui.label(RichText::new(&self.criteria_apply_msg).size(11.5).strong().color(p.success_green));
+                }
+            });
         });
     }
 
@@ -1681,15 +1876,7 @@ impl OptimizerApp {
             let apply_btn = egui::Button::new(RichText::new("⚡ Áp dụng & Ép ghi vĩnh viễn vào Windows").size(11.0).strong().color(Color32::WHITE))
                 .fill(p.primary_btn);
             if ui.add(apply_btn).clicked() {
-                set_cpu_max_state_dc(self.cpu_limit_dc);
-                set_cpu_max_state_ac(self.cpu_limit_ac);
-                set_timer_resolution_1ms(self.timer_1ms_enabled);
-                set_keep_awake(self.keep_awake_mode);
-                set_cooling_policy(self.cooling_active);
-                set_gamedvr(self.gamedvr_enabled);
-                crate::power::apply_permanent_windows_system_tweaks();
-                self.sync_config();
-                self.quick_opt_msg = "✓ Đã ghi toàn bộ thông số vĩnh viễn vào Windows thành công!".to_string();
+                self.apply_all_criteria();
             }
 
             ui.add_space(8.0);

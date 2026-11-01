@@ -424,3 +424,60 @@ pub fn apply_permanent_windows_system_tweaks() {
         "2000",
     );
 }
+
+pub fn set_tcp_optimization(enable: bool) -> bool {
+    let level = if enable { "autotuninglevel=normal" } else { "autotuninglevel=disabled" };
+    Command::new("netsh")
+        .args(["int", "tcp", "set", "global", level])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub fn set_sysmain_service(enable: bool) -> bool {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    let start_val = if enable { 2 } else { 4 };
+    let _ = crate::reg::reg_set_u32(
+        HKEY_LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Services\SysMain",
+        "Start",
+        start_val,
+    );
+    let action = if enable { "start" } else { "stop" };
+    Command::new("sc")
+        .args([action, "SysMain"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub fn set_ntfs_last_access(disable: bool) -> bool {
+    let val = if disable { "1" } else { "0" };
+    Command::new("fsutil")
+        .args(["behavior", "set", "disablelastaccess", val])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub fn set_mmcss_gaming_responsiveness(enable: bool) -> bool {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    let net_val = if enable { 0xFFFFFFFF } else { 10 };
+    let resp_val = if enable { 0 } else { 20 };
+    let r1 = crate::reg::reg_set_u32(
+        HKEY_LOCAL_MACHINE,
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile",
+        "NetworkThrottlingIndex",
+        net_val,
+    );
+    let r2 = crate::reg::reg_set_u32(
+        HKEY_LOCAL_MACHINE,
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile",
+        "SystemResponsiveness",
+        resp_val,
+    );
+    r1 && r2
+}
