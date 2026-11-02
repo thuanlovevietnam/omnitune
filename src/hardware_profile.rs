@@ -122,18 +122,8 @@ impl HardwareProfile {
         crate::power::apply_permanent_windows_system_tweaks();
 
         // MMCSS Network responsiveness tweak (disable network throttling index)
-        crate::reg::reg_set_u32(
-            HKEY_LOCAL_MACHINE,
-            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile",
-            "NetworkThrottlingIndex",
-            0xFFFFFFFF,
-        );
-        crate::reg::reg_set_u32(
-            HKEY_LOCAL_MACHINE,
-            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile",
-            "SystemResponsiveness",
-            0,
-        );
+        crate::power::set_mmcss_gaming_responsiveness(true);
+        crate::power::set_system_responsiveness(true);
         applied.push(format!(
             "OS {}: Ưu tiên phản hồi luồng giao diện (Win32PrioritySeparation=38, MMCSS NoThrottle).",
             self.os_name

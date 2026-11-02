@@ -323,18 +323,13 @@ pub fn set_timer_resolution_1ms(enable: bool) {
     }
 
     use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
-    let multimedia_key = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile";
     let tasks_games_key = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games";
 
     if enable {
-        crate::reg::reg_set_u32(HKEY_LOCAL_MACHINE, multimedia_key, "SystemResponsiveness", 0);
-        crate::reg::reg_set_u32(HKEY_LOCAL_MACHINE, multimedia_key, "NetworkThrottlingIndex", 0xFFFFFFFF);
         crate::reg::reg_set_u32(HKEY_LOCAL_MACHINE, tasks_games_key, "GPU Priority", 8);
         crate::reg::reg_set_u32(HKEY_LOCAL_MACHINE, tasks_games_key, "Priority", 6);
         crate::reg::reg_set_string(HKEY_LOCAL_MACHINE, tasks_games_key, "Scheduling Category", "High");
     } else {
-        crate::reg::reg_set_u32(HKEY_LOCAL_MACHINE, multimedia_key, "SystemResponsiveness", 20);
-        crate::reg::reg_set_u32(HKEY_LOCAL_MACHINE, multimedia_key, "NetworkThrottlingIndex", 10);
         crate::reg::reg_set_u32(HKEY_LOCAL_MACHINE, tasks_games_key, "Priority", 2);
         crate::reg::reg_set_string(HKEY_LOCAL_MACHINE, tasks_games_key, "Scheduling Category", "Medium");
     }
@@ -630,18 +625,31 @@ pub fn set_tcp_ecn(enable: bool) -> bool {
 pub fn set_mmcss_gaming_responsiveness(enable: bool) -> bool {
     use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
     let net_val = if enable { 0xFFFFFFFF } else { 10 };
-    let resp_val = if enable { 0 } else { 20 };
-    let r1 = crate::reg::reg_set_u32(
+    crate::reg::reg_set_u32(
         HKEY_LOCAL_MACHINE,
         r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile",
         "NetworkThrottlingIndex",
         net_val,
-    );
-    let r2 = crate::reg::reg_set_u32(
+    )
+}
+
+pub fn set_system_responsiveness(zero: bool) -> bool {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    let resp_val = if zero { 0 } else { 20 };
+    crate::reg::reg_set_u32(
         HKEY_LOCAL_MACHINE,
         r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile",
         "SystemResponsiveness",
         resp_val,
-    );
-    r1 && r2
+    )
+}
+
+#[allow(dead_code)]
+pub fn get_system_responsiveness() -> Option<u32> {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    crate::reg::reg_read_u32(
+        HKEY_LOCAL_MACHINE,
+        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile",
+        "SystemResponsiveness",
+    )
 }

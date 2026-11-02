@@ -637,6 +637,9 @@ impl OptimizerApp {
         if config.mmcss_optimized {
             crate::power::set_mmcss_gaming_responsiveness(true);
         }
+        if config.system_responsiveness_zero {
+            crate::power::set_system_responsiveness(true);
+        }
         if config.tcp_autotuning {
             crate::power::set_tcp_optimization(true);
         }
@@ -1005,6 +1008,7 @@ impl OptimizerApp {
         // Nhóm 5: Mạng & Kết nối TCP/IP (4)
         let _ = crate::power::set_tcp_optimization(self.tcp_autotuning);
         let _ = crate::power::set_mmcss_gaming_responsiveness(self.mmcss_optimized);
+        let _ = crate::power::set_system_responsiveness(self.system_responsiveness_zero);
         let _ = crate::power::set_tcp_ecn(self.tcp_ecn_enabled);
 
         // Nhóm 6: Nguồn điện, Pin & Tản nhiệt (4)
@@ -3073,6 +3077,7 @@ impl OptimizerApp {
                     &mut self.system_responsiveness_zero,
                     None,
                 ) {
+                    crate::power::set_system_responsiveness(self.system_responsiveness_zero);
                     self.sync_config();
                 }
             },
