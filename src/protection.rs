@@ -112,20 +112,8 @@ pub fn restore_windows_defaults() -> Vec<String> {
         results.push("Đã khôi phục Power Schemes mặc định.".to_string());
     }
 
-    // 2. Re-enable GameDVR
-    crate::reg::reg_set_u32(
-        windows_sys::Win32::System::Registry::HKEY_CURRENT_USER,
-        r"Software\Microsoft\Windows\CurrentVersion\GameDVR",
-        "AppCaptureEnabled",
-        1,
-    );
-    crate::reg::reg_set_u32(
-        windows_sys::Win32::System::Registry::HKEY_CURRENT_USER,
-        r"System\GameConfigStore",
-        "GameDVR_Enabled",
-        1,
-    );
-    results.push("Đã bật lại GameDVR mặc định.".to_string());
+    // 2. Restore GPU, DirectX and GameDVR
+    results.extend(crate::gpu::restore_gpu_defaults());
 
     // 3. Restore Timer Resolution to default 15.6ms
     unsafe {

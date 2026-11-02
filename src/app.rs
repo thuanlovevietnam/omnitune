@@ -623,7 +623,7 @@ impl OptimizerApp {
             set_cooling_policy(true);
         }
         if config.gamedvr_enabled {
-            let _ = set_gamedvr(true);
+            let _ = set_gamedvr(false);
         }
         if config.battery_threshold_80 && is_pro {
             let _ = set_battery_threshold(true, 80);
@@ -756,7 +756,7 @@ impl OptimizerApp {
                 startup_apps: startups,
                 protection: prot,
                 is_telemetry_running: telem,
-                gamedvr_enabled: gdvr,
+                gamedvr_enabled: !gdvr,
                 cpu_cores_info: cores,
                 dual_batteries: bats,
                 cpu_limit_dc: dc,
@@ -1001,7 +1001,7 @@ impl OptimizerApp {
             set_timer_resolution_1ms(false);
             self.timer_1ms_enabled = false;
         }
-        let _ = set_gamedvr(self.gamedvr_enabled);
+        let _ = set_gamedvr(!self.gamedvr_enabled);
         let _ = crate::power::set_menu_show_delay(self.menu_show_delay_zero);
         let _ = crate::power::set_startup_delay(self.startup_delay_zero);
 
@@ -3095,7 +3095,7 @@ impl OptimizerApp {
                     &mut self.gamedvr_enabled,
                     Some(("● ĐÃ TẮT", "○ ĐANG BẬT")),
                 ) {
-                    let _ = set_gamedvr(self.gamedvr_enabled);
+                    let _ = set_gamedvr(!self.gamedvr_enabled);
                     self.sync_config();
                 }
             },

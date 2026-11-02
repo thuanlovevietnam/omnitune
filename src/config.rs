@@ -109,7 +109,7 @@ impl Default for AppConfig {
             cpu_limit_dc: 80,
             cpu_limit_ac: 100,
             cooling_active: false,
-            gamedvr_enabled: false,
+            gamedvr_enabled: true,
             auto_pilot_enabled: true,
             battery_threshold_80: false,
             minimize_to_tray: false,

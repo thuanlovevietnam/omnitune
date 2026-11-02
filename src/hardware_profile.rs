@@ -207,16 +207,9 @@ impl HardwareProfile {
         }
 
         // 4. GPU Optimization
-        if self.is_dedicated_gpu {
-            applied.push(format!(
-                "GPU rời [{}]: Ưu tiên phân bổ đồ họa hiệu năng cao và giải phóng tài nguyên CPU.",
-                self.gpu_name
-            ));
-        } else {
-            applied.push(format!(
-                "GPU tích hợp [{}]: Cân bằng tài nguyên hệ thống và bộ nhớ chia sẻ VRAM động.",
-                self.gpu_name
-            ));
+        let gpu_msgs = crate::gpu::apply_hardware_gpu_optimal(self, is_ac, battery_pct);
+        for m in gpu_msgs {
+            applied.push(m);
         }
 
         // 5. RAM Watchdog policy
@@ -330,13 +323,24 @@ fn detect_disk() -> (bool, String, u64, u64, String) {
 
 fn detect_gpu() -> (String, bool) {
     let base_key = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
-    let subkeys = ["0000", "0001", "0002", "0003"];
+    let mut subkeys = crate::reg::reg_enum_subkeys(HKEY_LOCAL_MACHINE, base_key);
+    if subkeys.is_empty() {
+        subkeys = vec!["0000".to_string(), "0001".to_string(), "0002".to_string(), "0003".to_string()];
+    }
     let mut found_gpus = Vec::new();
 
     for sub in subkeys {
+        if !sub.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
         let key_path = format!(r"{}\{}", base_key, sub);
         if let Some(desc) = crate::reg::reg_read_string(HKEY_LOCAL_MACHINE, &key_path, "DriverDesc") {
             let trimmed = desc.trim().to_string();
+            let upper = trimmed.to_uppercase();
+            // Lọc các display adapter ảo
+            if upper.contains("SPACEDESK") || upper.contains("VIRTUAL") || upper.contains("MIRACAST") || upper.contains("CITRIX") {
+                continue;
+            }
             if !trimmed.is_empty() && !found_gpus.contains(&trimmed) {
                 found_gpus.push(trimmed);
             }
@@ -348,7 +352,10 @@ fn detect_gpu() -> (String, bool) {
     }
 
     // Find if dedicated GPU exists
-    let dedicated_keywords = ["NVIDIA", "GEFORCE", "RTX", "GTX", "RADEON RX", "ARC", "QUADRO", "TITAN"];
+    let dedicated_keywords = [
+        "NVIDIA", "GEFORCE", "RTX", "GTX", "QUADRO", "TITAN", "TESLA",
+        "RADEON RX", "RADEON PRO", "RADEON VII", "ARC A", "ARC PRO",
+    ];
     let mut dedicated = false;
     let mut primary_gpu = found_gpus[0].clone();
 

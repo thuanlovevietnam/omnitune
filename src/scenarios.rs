@@ -72,21 +72,8 @@ pub fn apply_scenario(
                 SetThreadExecutionState(ES_CONTINUOUS);
                 let _ = timeEndPeriod(1);
             }
-            // Restore GameDVR
-            let _ = Command::new("reg")
-                .args([
-                    "add",
-                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR",
-                    "/v",
-                    "AppCaptureEnabled",
-                    "/t",
-                    "REG_DWORD",
-                    "/d",
-                    "1",
-                    "/f",
-                ])
-                .creation_flags(CREATE_NO_WINDOW)
-                .status();
+            // Khôi phục GPU & DirectX về trạng thái tối ưu cân bằng theo phần cứng
+            let _ = crate::gpu::apply_hardware_gpu_optimal(hw, is_ac, battery_pct);
 
             let _ = crate::power::set_power_scheme("SCHEME_BALANCED");
             let _ = crate::power::set_cpu_max_state_dc(hw.optimal_cpu_dc_limit);
@@ -100,7 +87,7 @@ pub fn apply_scenario(
             );
 
             format!(
-                "Đã trở về chế độ Cân bằng tiêu chuẩn: CPU {} nhân ({}), RAM tối ưu động.",
+                "Đã trở về chế độ Cân bằng tiêu chuẩn: CPU {} nhân ({}), GPU & RAM tối ưu động.",
                 hw.cpu_logical_cores, hw.cpu_brand
             )
         }
@@ -168,21 +155,8 @@ pub fn apply_scenario(
                 "Timer 15.6ms (Cần Pro để lên 1.0ms)"
             };
 
-            // 4. Disable Windows GameDVR background capture
-            let _ = Command::new("reg")
-                .args([
-                    "add",
-                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR",
-                    "/v",
-                    "AppCaptureEnabled",
-                    "/t",
-                    "REG_DWORD",
-                    "/d",
-                    "0",
-                    "/f",
-                ])
-                .creation_flags(CREATE_NO_WINDOW)
-                .status();
+            // 4. Real GPU & DirectX optimization (HAGS, GPU Priority 8, FSE, GameDVR off, PCIe ASPM 0)
+            let _ = crate::gpu::apply_scenario_gaming_gpu(hw, is_pro);
 
             // 5. Deprioritize cloud sync and background tools
             let deprioritized = prioritize_apps(
@@ -195,7 +169,7 @@ pub fn apply_scenario(
             let (freed, _) = crate::memory::trim_working_sets(sys);
 
             format!(
-                "Đã bật kịch bản Game & Đồ họa: {}, tắt GameDVR ngầm, tối ưu GPU [{}], giải phóng {} RAM làm VRAM, hạ {} app ngầm.",
+                "Đã bật kịch bản Game & Đồ họa: {}, tối ưu GPU [{}: Priority 8/FSE], giải phóng {} RAM làm VRAM, hạ {} app ngầm.",
                 timer_status,
                 hw.gpu_name,
                 crate::cleaner::format_bytes(freed),
@@ -313,6 +287,9 @@ pub fn apply_scenario(
             let _ = crate::power::set_cpu_max_state_dc(final_dc);
             let _ = crate::power::set_cooling_policy(false); // Passive cooling
 
+            // Hạ nguồn GPU vào chế độ tiết kiệm sâu (RTD3)
+            let _ = crate::gpu::apply_gpu_power_save(hw);
+
             let deprioritized = prioritize_apps(
                 sys,
                 &["googledrivefs", "onedrive", "rustdesk", "tailscale", "searchindexer"],
@@ -322,7 +299,7 @@ pub fn apply_scenario(
             let (freed, _) = crate::memory::trim_working_sets(sys);
 
             format!(
-                "Đã bật kịch bản Di động / Pin: Điều tiết CPU {} nhân ở mức {}%, quạt tắt (Passive), thu hồi {} RAM, đóng băng {} app ngầm.",
+                "Đã bật kịch bản Di động / Pin: Điều tiết CPU {} nhân ở mức {}%, quạt tắt (Passive), hạ nguồn GPU (RTD3), thu hồi {} RAM, đóng băng {} app ngầm.",
                 hw.cpu_logical_cores,
                 final_dc,
                 crate::cleaner::format_bytes(freed),
@@ -341,10 +318,13 @@ pub fn apply_scenario(
             let _ = crate::power::set_cpu_max_state_ac(55);
             let _ = crate::power::set_cooling_policy(false);
 
+            // Ngủ sâu GPU khi máy nhàn rỗi
+            let _ = crate::gpu::apply_gpu_power_save(hw);
+
             let (freed, count) = crate::memory::trim_working_sets(sys);
 
             format!(
-                "Đã bật kịch bản Nhàn rỗi tự động: Người dùng không tương tác > 5 phút, hạ tải CPU {} nhân, giải phóng {} RAM từ {} tiến trình.",
+                "Đã bật kịch bản Nhàn rỗi tự động: Người dùng không tương tác > 5 phút, hạ tải CPU {} nhân, ngủ sâu GPU, giải phóng {} RAM từ {} tiến trình.",
                 hw.cpu_logical_cores,
                 crate::cleaner::format_bytes(freed),
                 count

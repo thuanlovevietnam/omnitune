@@ -17,6 +17,7 @@ mod hardware_profile;
 mod licensing;
 mod reg;
 mod config;
+mod gpu;
 mod tray;
 
 use app::OptimizerApp;
