@@ -21,3 +21,6 @@ opt-level = 0
 [profile.release]
 opt-level = 1
 lto = false
+
+[build-dependencies]
+winres = "0.1.12"

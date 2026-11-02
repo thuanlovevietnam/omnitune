@@ -54,12 +54,23 @@ Thay vì buộc người dùng phải tự làm kỹ sư hệ thống với hàn
 
 ## 💎 Mô hình Bản quyền & Kiếm tiền (Monetization)
 OmniTune được thiết kế theo mô hình **Freemium Pro ($9 Trọn đời)**:
-- **Bản Miễn phí:** Auto-Pilot tự nhận diện, dọn rác an toàn Tầng 1, theo dõi pin và CPU.
-- **Bản Pro VIP:** Mở khóa dọn rác Developer (NPM, Cargo, Go 3.6GB+), Timer 1.0ms tối ưu game & remote, khóa sạc pin 80%, không giới hạn.
+- **Bản Miễn phí:** Auto-Pilot tự nhận diện, dọn rác an toàn Tầng 1 (Temp, Recycle Bin), giám sát CPU, RAM, Pin ACPI theo thời gian thực.
+- **Bản Pro VIP ($9 Vĩnh viễn):**
+  - 🚀 Dọn rác Developer Cache (NPM, Cargo, Go hàng chục GB).
+  - 🎯 Timer Resolution 1.0ms triệt tiêu trễ chuột & giật khung hình FPS.
+  - 🛡️ Khóa ngưỡng sạc Pin 80% (Lenovo PM / WMI) chống phù và chai cell lithium.
+  - 🔒 Chặn triệt để Telemetry DiagTrack thu thập dữ liệu ngầm của Microsoft.
+  - 🧹 Deep Debloat: Tắt Windows Copilot, Bing Search Start Menu và Edge chạy ngầm.
+  - ⚡ Smart Auto-RAM Trim 24/7 ngầm không gây giật đơ máy.
+  - 🧠 CPU Core Affinity & High Priority Class cho ứng dụng đang tương tác (Focus).
+  - 💾 Tạo điểm khôi phục an toàn (System Restore Point) 1-Click trước khi tối ưu sâu.
 - **Tạo Key cho khách hàng:** Sử dụng công cụ `generate_key.py`:
   ```bash
   python generate_key.py khachhang@gmail.com
+  # Hoặc khóa theo HWID máy:
+  python generate_key.py khachhang@gmail.com 4B12-8F9A
   ```
+- **Máy chủ Webhook tự động hóa:** `license_server.py` tích hợp tự động cấp key qua VietQR (SePay) và Lemon Squeezy 24/7.
 - **Landing Page bán hàng:** Nằm tại thư mục `website/index.html` (sẵn sàng deploy lên GitHub Pages hoặc Vercel).
 
 ---

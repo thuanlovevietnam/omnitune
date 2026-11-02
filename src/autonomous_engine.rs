@@ -60,6 +60,7 @@ pub struct AutonomousEngine {
     pub last_ram_trim: Instant,
     pub hardware_profile: HardwareProfile,
     pub operating_mode: OperatingMode,
+    pub is_pro: bool,
 }
 
 impl AutonomousEngine {
@@ -70,6 +71,7 @@ impl AutonomousEngine {
         auto_pilot_enabled: bool,
         eco_qos_enabled: bool,
         auto_ram_enabled: bool,
+        is_pro: bool,
     ) -> Self {
         let mut engine = Self {
             activity_log: Vec::new(),
@@ -82,6 +84,7 @@ impl AutonomousEngine {
             last_ram_trim: Instant::now(),
             hardware_profile: hw,
             operating_mode: mode,
+            is_pro,
         };
 
         engine.log(
@@ -137,7 +140,7 @@ impl AutonomousEngine {
                 let idle_ms = get_user_idle_ms();
                 if let Some(target_scen) = detect_recommended_scenario(sys, is_ac, battery_pct, idle_ms) {
                     self.current_scenario = target_scen;
-                    let msg = apply_scenario(target_scen, sys, &self.hardware_profile, is_ac, battery_pct);
+                    let msg = apply_scenario(target_scen, sys, &self.hardware_profile, is_ac, battery_pct, self.is_pro);
                     self.log(
                         "[TỰ ĐỘNG]",
                         format!("Kích hoạt Tự Động Theo Công Việc -> [{}]: {}", target_scen.name(), msg),
@@ -156,7 +159,7 @@ impl AutonomousEngine {
         battery_pct: u8,
     ) {
         self.current_scenario = scenario;
-        let msg = apply_scenario(scenario, sys, &self.hardware_profile, is_ac, battery_pct);
+        let msg = apply_scenario(scenario, sys, &self.hardware_profile, is_ac, battery_pct, self.is_pro);
         self.log(
             "[CHỌN]",
             format!("Người dùng chọn kịch bản [{}]: {}", scenario.name(), msg),
@@ -192,6 +195,7 @@ impl AutonomousEngine {
                             &self.hardware_profile,
                             is_ac,
                             battery_pct,
+                            self.is_pro,
                         );
                         self.log(
                             "[PIN]",
@@ -205,6 +209,7 @@ impl AutonomousEngine {
                             &self.hardware_profile,
                             is_ac,
                             battery_pct,
+                            self.is_pro,
                         );
                         self.log(
                             "[NGUỒN]",
@@ -226,8 +231,17 @@ impl AutonomousEngine {
             // Áp dụng EcoQoS cho các app nền
             if self.eco_qos_enabled {
                 let (boosted, eco_count) = apply_foreground_boost_and_eco(sys, fg_pid);
-                if let Some((_, ref name)) = fg {
-                    if eco_count > 0 {
+                if let Some((pid, ref name)) = fg {
+                    if self.is_pro {
+                        crate::eco_qos::apply_pro_foreground_boost(pid, self.hardware_profile.cpu_logical_cores);
+                        self.log(
+                            "[PRO VIP]",
+                            format!(
+                                "Ưu tiên tối đa '{}' (High Priority, {} nhân CPU, hạ tải {} app nền).",
+                                name, self.hardware_profile.cpu_logical_cores, eco_count
+                            ),
+                        );
+                    } else if eco_count > 0 {
                         self.log(
                             "[ECO]",
                             format!(
@@ -253,6 +267,7 @@ impl AutonomousEngine {
                             &self.hardware_profile,
                             is_ac,
                             battery_pct,
+                            self.is_pro,
                         );
                         self.log("[CHUYỂN]", format!("Phát hiện tác vụ [{}]: {}", target_scen.name(), msg));
                     }
@@ -274,6 +289,7 @@ impl AutonomousEngine {
                 &self.hardware_profile,
                 is_ac,
                 battery_pct,
+                self.is_pro,
             );
             self.log("[NGHỈ]", msg);
         }
@@ -284,19 +300,21 @@ impl AutonomousEngine {
             && ram_load_pct >= ram_threshold
             && self.last_ram_trim.elapsed() >= Duration::from_secs(60)
         {
-            self.last_ram_trim = Instant::now();
-            let (freed, count) = trim_working_sets(sys);
-            if freed > 10 * 1024 * 1024 {
-                self.log(
-                    "[RAM]",
-                    format!(
-                        "RAM chạm {}% (ngưỡng máy {:.1}GB) -> Tự động thu hồi {} bộ nhớ từ {} tiến trình.",
-                        ram_load_pct,
-                        self.hardware_profile.ram_total_gb,
-                        format_bytes(freed),
-                        count
-                    ),
-                );
+            if self.is_pro {
+                self.last_ram_trim = Instant::now();
+                let (freed, count) = trim_working_sets(sys);
+                if freed > 10 * 1024 * 1024 {
+                    self.log(
+                        "[PRO RAM]",
+                        format!(
+                            "RAM chạm {}% (ngưỡng máy {:.1}GB) -> Tự động thu hồi {} bộ nhớ từ {} tiến trình.",
+                            ram_load_pct,
+                            self.hardware_profile.ram_total_gb,
+                            format_bytes(freed),
+                            count
+                        ),
+                    );
+                }
             }
         }
 

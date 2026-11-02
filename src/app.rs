@@ -5,7 +5,10 @@ use crate::cleaner::{
 };
 use crate::config::{load_config, save_config, set_autostart_registry, AppConfig};
 use crate::eco_qos::{apply_foreground_boost_and_eco, get_foreground_process};
-use crate::licensing::{deactivate_license, load_license, save_license, LicenseData};
+use crate::licensing::{
+    deactivate_license, format_remaining_trial, get_trial_status, is_pro_active, load_license,
+    save_license, start_trial, LicenseData, TrialStatus,
+};
 use crate::memory::{
     get_memory_stats, get_top_processes, terminate_process, trim_single_process, trim_working_sets,
     MemStats,
@@ -17,7 +20,8 @@ use crate::power::{
     PowerStatus,
 };
 use crate::protection::{
-    enable_hibernate_as_admin, get_protection_overview, set_battery_threshold, ProtectionOverview,
+    create_restore_point, enable_hibernate_as_admin, get_protection_overview, restore_windows_defaults,
+    set_battery_threshold, ProtectionOverview,
 };
 use crate::startup::{get_startup_apps, is_telemetry_active, toggle_startup_item};
 use crate::theme::{
@@ -25,6 +29,7 @@ use crate::theme::{
 };
 use crate::types::{BatteryDetails, CleanTier, JunkCategory, ProcessMemInfo, StartupAppItem, Tab};
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, Vec2};
+use std::os::windows::process::CommandExt;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 use sysinfo::System;
@@ -32,6 +37,7 @@ use sysinfo::System;
 pub enum BackgroundMessage {
     InitialScan(InitialScanResult),
     BatteryUpdate(Vec<BatteryDetails>),
+    UpdateAvailable { latest_version: String, download_url: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +137,7 @@ pub struct OptimizerApp {
     // Nhóm 7: Telemetry & DiagTrack
     disable_telemetry: bool,
     disable_dmwappush: bool,
+    deep_debloat: bool,
 
     criteria_apply_msg: String,
 
@@ -161,6 +168,10 @@ pub struct OptimizerApp {
 
     // 4 Partitions Selection on Home screen
     selected_partition: Option<PartitionTab>,
+
+    // Update Checker
+    update_available: Option<(String, String)>,
+    last_interaction: Instant,
 }
 
 fn render_switch_custom(ui: &mut egui::Ui, value: &mut bool, on_text: &str, off_text: &str) -> bool {
@@ -217,7 +228,7 @@ fn render_chip_frame<R>(
         .stroke(Stroke::new(1.0, border_color))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.set_min_height(58.0);
+            ui.set_min_height(64.0);
             add_contents(ui)
         })
         .inner
@@ -583,13 +594,14 @@ impl OptimizerApp {
         let mem_stats = get_memory_stats();
         let power_status = get_power_status();
         let license = load_license();
+        let is_pro = is_pro_active(&license);
 
         let mut config = load_config();
         let run_on_startup = crate::config::is_autostart_enabled();
         config.run_on_startup = run_on_startup;
 
         // Apply saved configurations immediately on launch
-        if config.timer_1ms_enabled {
+        if config.timer_1ms_enabled && is_pro {
             set_timer_resolution_1ms(true);
         }
         if config.keep_awake_mode > 0 {
@@ -601,7 +613,7 @@ impl OptimizerApp {
         if config.gamedvr_enabled {
             let _ = set_gamedvr(true);
         }
-        if config.battery_threshold_80 {
+        if config.battery_threshold_80 && is_pro {
             let _ = set_battery_threshold(true, 80);
         }
         if config.sysmain_disabled {
@@ -649,8 +661,11 @@ impl OptimizerApp {
         if config.tcp_ecn_enabled {
             crate::power::set_tcp_ecn(true);
         }
-        if config.disable_telemetry {
+        if config.disable_telemetry && is_pro {
             crate::startup::toggle_telemetry(true);
+        }
+        if config.deep_debloat && is_pro {
+            let _ = crate::protection::apply_deep_debloat(true);
         }
 
         // Apply permanent OS responsiveness tweaks
@@ -737,6 +752,29 @@ impl OptimizerApp {
             }));
         });
 
+        // Background update check against GitHub releases
+        let bg_tx_update = bg_tx.clone();
+        std::thread::spawn(move || {
+            let script = r#"$ProgressPreference = 'SilentlyContinue'; try { $res = Invoke-RestMethod -Uri 'https://api.github.com/repos/thuanlovevietnam/omnitune/releases/latest' -Headers @{'User-Agent'='OmniTune'} -TimeoutSec 4; if ($res.tag_name) { Write-Output ($res.tag_name + '|' + $res.html_url) } } catch {}"#;
+            if let Ok(output) = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", script])
+                .creation_flags(0x08000000)
+                .output()
+            {
+                let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if let Some((tag, url)) = text.split_once('|') {
+                    let tag_clean = tag.trim_start_matches('v').trim();
+                    let cur_ver = env!("CARGO_PKG_VERSION");
+                    if tag_clean != cur_ver && !tag_clean.is_empty() {
+                        let _ = bg_tx_update.send(BackgroundMessage::UpdateAvailable {
+                            latest_version: tag.to_string(),
+                            download_url: url.to_string(),
+                        });
+                    }
+                }
+            }
+        });
+
         let mut hw = crate::hardware_profile::HardwareProfile::detect(&mut sys);
         hw.dynamic_ram_threshold_pct = config.ram_trim_threshold_pct;
         let mut autonomous = AutonomousEngine::new(
@@ -746,6 +784,7 @@ impl OptimizerApp {
             config.auto_pilot_enabled,
             config.eco_qos_enabled,
             config.auto_ram_enabled,
+            is_pro,
         );
 
         // Khôi phục & thực thi ngay cấu hình chế độ đã lưu
@@ -770,6 +809,7 @@ impl OptimizerApp {
                     &hw,
                     power_status.is_ac_online,
                     power_status.battery_percent,
+                    is_pro,
                 );
                 autonomous.log(
                     "[KHÔI PHỤC]",
@@ -833,6 +873,7 @@ impl OptimizerApp {
             tcp_ecn_enabled: config.tcp_ecn_enabled,
             disable_telemetry: config.disable_telemetry,
             disable_dmwappush: true,
+            deep_debloat: config.deep_debloat,
 
             criteria_apply_msg: String::new(),
             license,
@@ -851,6 +892,21 @@ impl OptimizerApp {
             config,
             run_on_startup,
             selected_partition: None,
+            update_available: None,
+            last_interaction: Instant::now(),
+        }
+    }
+
+    pub fn check_pro_gate(&mut self, feature_name: &str) -> bool {
+        if is_pro_active(&self.license) {
+            true
+        } else {
+            self.show_license_modal = true;
+            self.license_feedback_msg = format!(
+                "★ Tính năng '{}' chỉ dành cho bản OmniTune Pro VIP (hoặc dùng thử 7 ngày). Mở khóa ngay!",
+                feature_name
+            );
+            false
         }
     }
 
@@ -889,11 +945,14 @@ impl OptimizerApp {
         self.config.system_responsiveness_zero = self.system_responsiveness_zero;
         self.config.tcp_ecn_enabled = self.tcp_ecn_enabled;
         self.config.disable_telemetry = self.disable_telemetry;
+        self.config.deep_debloat = self.deep_debloat;
 
         save_config(&self.config);
     }
 
     pub fn apply_all_criteria(&mut self) {
+        let is_pro = is_pro_active(&self.license);
+
         // Nhóm 1: CPU & Điều độ Tiến trình (7)
         let _ = set_cpu_max_state_ac(self.cpu_limit_ac);
         let _ = set_cpu_max_state_dc(self.cpu_limit_dc);
@@ -905,7 +964,7 @@ impl OptimizerApp {
         self.autonomous.hardware_profile.dynamic_ram_threshold_pct = self.ram_trim_threshold_pct;
         let _ = crate::power::set_large_system_cache(self.large_system_cache);
         let _ = crate::power::set_memory_compression(self.memory_compression);
-        if self.autonomous.auto_ram_enabled {
+        if self.autonomous.auto_ram_enabled && is_pro {
             let (freed, _) = trim_working_sets(&mut self.sys);
             if freed > 0 {
                 self.autonomous.log("[RAM]", format!("Thu hồi tức thì {} RAM.", format_bytes(freed)));
@@ -920,7 +979,12 @@ impl OptimizerApp {
         let _ = crate::power::set_wait_to_kill_service(self.wait_to_kill_service);
 
         // Nhóm 4: Đồ họa, Màn hình & Độ trễ (4)
-        set_timer_resolution_1ms(self.timer_1ms_enabled);
+        if is_pro {
+            set_timer_resolution_1ms(self.timer_1ms_enabled);
+        } else {
+            set_timer_resolution_1ms(false);
+            self.timer_1ms_enabled = false;
+        }
         let _ = set_gamedvr(self.gamedvr_enabled);
         let _ = crate::power::set_menu_show_delay(self.menu_show_delay_zero);
         let _ = crate::power::set_startup_delay(self.startup_delay_zero);
@@ -932,14 +996,23 @@ impl OptimizerApp {
 
         // Nhóm 6: Nguồn điện, Pin & Tản nhiệt (4)
         let _ = set_cooling_policy(self.cooling_active);
-        let _ = set_battery_threshold(self.protection.battery_threshold_enabled, 80);
+        if is_pro {
+            let _ = set_battery_threshold(self.protection.battery_threshold_enabled, 80);
+        } else {
+            self.protection.battery_threshold_enabled = false;
+        }
         set_keep_awake(self.keep_awake_mode);
         if self.protection.is_hibernate_enabled {
             let _ = enable_hibernate_as_admin();
         }
 
-        // Nhóm 7: Dịch vụ ngầm & Telemetry (3)
-        let _ = crate::startup::toggle_telemetry(self.disable_telemetry);
+        // Nhóm 7: Dịch vụ ngầm, Telemetry & Deep Debloat (3)
+        if is_pro {
+            let _ = crate::startup::toggle_telemetry(self.disable_telemetry);
+            if self.deep_debloat {
+                let _ = crate::protection::apply_deep_debloat(true);
+            }
+        }
 
         crate::power::apply_permanent_windows_system_tweaks();
 
@@ -1073,6 +1146,13 @@ impl OptimizerApp {
                 BackgroundMessage::BatteryUpdate(bats) => {
                     self.update_battery_metrics(bats);
                     self.bg_fetch_in_progress = false;
+                }
+                BackgroundMessage::UpdateAvailable { latest_version, download_url } => {
+                    self.autonomous.log(
+                        "[CẬP NHẬT]",
+                        format!("Có bản cập nhật mới: {}!", latest_version),
+                    );
+                    self.update_available = Some((latest_version, download_url));
                 }
             }
         }
@@ -1257,7 +1337,7 @@ impl eframe::App for OptimizerApp {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
         }
 
-        // Intercept close button (X) to keep background optimizations active
+        // Intercept close button (X)
         if ui.ctx().input(|i| i.viewport().close_requested()) {
             if self.config.minimize_to_tray {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -1266,21 +1346,29 @@ impl eframe::App for OptimizerApp {
                     "[KHAY HỆ THỐNG]",
                     "Đã thu nhỏ xuống khay hệ thống. Mọi tối ưu (Auto-Pilot, RAM, Timer) vẫn tiếp tục duy trì.".to_string(),
                 );
+            } else {
+                std::process::exit(0);
             }
         }
 
-        // Dynamic 60 FPS repaint during user interaction (scrolling, clicking, hovering); low power 1 FPS when idle
-        let is_active = ui.input(|i| {
+        // Track any user interaction (mouse wheel scroll, cursor movement, clicks, keys)
+        let is_interacting = ui.input(|i| {
             i.smooth_scroll_delta != Vec2::ZERO
                 || i.pointer.is_moving()
                 || i.pointer.any_down()
                 || !i.raw.events.is_empty()
         });
 
-        if is_active {
+        if is_interacting {
+            self.last_interaction = Instant::now();
+        }
+
+        // Maintain continuous 60+ FPS rendering during interaction and for 1.2s after,
+        // ensuring kinetic scroll deceleration and animations glide completely smoothly.
+        if self.last_interaction.elapsed() < Duration::from_millis(1200) {
             ui.ctx().request_repaint();
         } else {
-            ui.ctx().request_repaint_after(Duration::from_millis(1000));
+            ui.ctx().request_repaint_after(Duration::from_millis(300));
         }
 
         let p = self.palette;
@@ -1290,8 +1378,9 @@ impl eframe::App for OptimizerApp {
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .wheel_scroll_multiplier(Vec2::new(1.0, 2.5))
+                    .animated(false)
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+                    .wheel_scroll_multiplier(Vec2::new(1.0, 3.5))
                     .show(ui, |ui| {
                         self.render_widget_view(ui);
                         ui.add_space(20.0);
@@ -1307,6 +1396,22 @@ impl OptimizerApp {
     fn render_widget_view(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
+        // --- UPDATE NOTIFICATION BANNER ---
+        if let Some((ver, url)) = &self.update_available {
+            p.modern_card(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("🚀").size(14.0));
+                    ui.label(RichText::new(format!("Có bản cập nhật mới: {}", ver)).size(12.0).strong().color(p.accent_blue));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(RichText::new("Tải ngay ↗").size(11.5).strong().color(Color32::WHITE)).clicked() {
+                            ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                        }
+                    });
+                });
+            });
+            ui.add_space(4.0);
+        }
+
         // --- TOP BAR: Logo + License + Theme ---
         ui.horizontal(|ui| {
             ui.heading(
@@ -1317,6 +1422,16 @@ impl OptimizerApp {
             );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Exit app button
+                let exit_btn = egui::Button::new(RichText::new("✕ Thoát").size(13.0).strong().color(Color32::WHITE))
+                    .fill(Color32::from_rgb(220, 38, 38))
+                    .corner_radius(CornerRadius::same(6));
+                if ui.add(exit_btn).on_hover_text("Thoát hoàn toàn ứng dụng (dừng mọi tiến trình)").clicked() {
+                    std::process::exit(0);
+                }
+
+                ui.add_space(6.0);
+
                 // Theme toggle
                 let (theme_text, theme_hover) = if self.theme_mode == ThemeMode::Dark {
                     ("Sáng", "Chuyển giao diện Sáng")
@@ -1324,7 +1439,7 @@ impl OptimizerApp {
                     ("Tối", "Chuyển giao diện Tối")
                 };
 
-                let theme_btn = egui::Button::new(RichText::new(theme_text).size(13.0).strong().color(p.text_primary))
+                let theme_btn = egui::Button::new(RichText::new(theme_text).size(13.5).strong().color(p.text_primary))
                     .fill(p.card_bg)
                     .stroke(Stroke::new(1.0, p.card_border))
                     .corner_radius(CornerRadius::same(6));
@@ -1341,18 +1456,40 @@ impl OptimizerApp {
 
                 // Pro / License status button
                 if self.license.is_valid {
-                    let pro_badge = egui::Button::new(RichText::new("★ PRO").size(12.5).strong().color(Color32::WHITE))
+                    let pro_badge = egui::Button::new(RichText::new("★ PRO").size(13.5).strong().color(Color32::WHITE))
                         .fill(Color32::from_rgb(217, 119, 6))
                         .corner_radius(CornerRadius::same(6));
                     if ui.add(pro_badge).on_hover_text(format!("OmniTune Pro: {}", self.license.licensee)).clicked() {
                         self.show_license_modal = !self.show_license_modal;
                     }
                 } else {
-                    let buy_btn = egui::Button::new(RichText::new("★ Lên PRO").size(12.5).strong().color(Color32::WHITE))
-                        .fill(p.warn_amber)
-                        .corner_radius(CornerRadius::same(6));
-                    if ui.add(buy_btn).on_hover_text("Nâng cấp lên bản OmniTune Pro").clicked() {
-                        self.show_license_modal = !self.show_license_modal;
+                    let trial = get_trial_status(&self.license);
+                    match trial {
+                        TrialStatus::Active { remaining_secs } => {
+                            let label = format!("★ Dùng thử ({})", format_remaining_trial(remaining_secs));
+                            let trial_badge = egui::Button::new(RichText::new(label).size(13.0).strong().color(Color32::WHITE))
+                                .fill(Color32::from_rgb(37, 99, 235))
+                                .corner_radius(CornerRadius::same(6));
+                            if ui.add(trial_badge).on_hover_text("Bản quyền dùng thử Pro đang hoạt động").clicked() {
+                                self.show_license_modal = !self.show_license_modal;
+                            }
+                        }
+                        TrialStatus::Expired => {
+                            let exp_badge = egui::Button::new(RichText::new("★ Hết thử").size(13.0).strong().color(Color32::WHITE))
+                                .fill(Color32::from_rgb(220, 38, 38))
+                                .corner_radius(CornerRadius::same(6));
+                            if ui.add(exp_badge).on_hover_text("Dùng thử Pro đã hết hạn. Bấm để mua key Pro.").clicked() {
+                                self.show_license_modal = !self.show_license_modal;
+                            }
+                        }
+                        TrialStatus::NotStarted => {
+                            let buy_btn = egui::Button::new(RichText::new("★ Lên PRO").size(13.5).strong().color(Color32::WHITE))
+                                .fill(p.warn_amber)
+                                .corner_radius(CornerRadius::same(6));
+                            if ui.add(buy_btn).on_hover_text("Nâng cấp lên bản OmniTune Pro (hoặc dùng thử 7 ngày)").clicked() {
+                                self.show_license_modal = !self.show_license_modal;
+                            }
+                        }
                     }
                 }
             });
@@ -1364,54 +1501,132 @@ impl OptimizerApp {
         if self.show_license_modal {
             p.modern_card(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("★ BẢN QUYỀN OMNITUNE PRO").size(14.5).strong().color(p.warn_amber));
+                    ui.label(RichText::new("★ BẢN QUYỀN OMNITUNE PRO").size(16.0).strong().color(p.warn_amber));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("✕ Đóng").size(12.0)).clicked() {
+                        if ui.button(RichText::new("✕ Đóng").size(13.5)).clicked() {
                             self.show_license_modal = false;
                         }
                     });
                 });
                 ui.separator();
-                ui.label(RichText::new("Mở khóa vĩnh viễn: Dọn sạch NPM/Cargo cache hàng chục GB, Timer 1.0ms tối ưu game, khóa ngưỡng sạc pin 80%.").size(12.2).color(p.text_secondary));
+
+                // Trial Section
+                if !self.license.is_valid {
+                    let trial = get_trial_status(&self.license);
+                    match trial {
+                        TrialStatus::NotStarted => {
+                            let start_trial_btn = egui::Button::new(RichText::new("🎁 Kích hoạt 7 ngày dùng thử Full PRO miễn phí").size(13.8).strong().color(Color32::WHITE))
+                                .fill(Color32::from_rgb(16, 149, 60))
+                                .corner_radius(CornerRadius::same(6));
+                            if ui.add(start_trial_btn).on_hover_text("Dùng thử đầy đủ tính năng Pro trong 7 ngày không cần thẻ").clicked() {
+                                self.license = start_trial();
+                                self.autonomous.is_pro = is_pro_active(&self.license);
+                                self.license_feedback_msg = "✓ Đã kích hoạt 7 ngày trải nghiệm OmniTune Pro!".to_string();
+                                self.autonomous.log("[TRIAL]", "Bắt đầu 7 ngày trải nghiệm Pro cao cấp.".to_string());
+                            }
+                        }
+                        TrialStatus::Active { remaining_secs } => {
+                            ui.label(RichText::new(format!("🎁 Đang trải nghiệm Pro miễn phí (Còn {})", format_remaining_trial(remaining_secs))).size(13.5).strong().color(p.accent_blue));
+                        }
+                        TrialStatus::Expired => {
+                            ui.label(RichText::new("⚠️ Thời gian trải nghiệm 7 ngày đã kết thúc. Vui lòng mua key để tiếp tục dùng tính năng VIP.").size(13.5).strong().color(p.warn_amber));
+                        }
+                    }
+                    ui.add_space(4.0);
+                    ui.separator();
+                }
+
+                ui.label(RichText::new("★ ĐẶC QUYỀN MỞ KHÓA BẢN PRO VIP ($9 TRỌN ĐỜI):").size(15.5).strong().color(p.warn_amber));
                 ui.add_space(4.0);
 
+                egui::Frame::new()
+                    .fill(Color32::TRANSPARENT)
+                    .corner_radius(CornerRadius::same(spacing::CHIP_RADIUS))
+                    .stroke(Stroke::new(1.0, p.card_border))
+                    .inner_margin(egui::Margin::symmetric(14, 10))
+                    .show(ui, |ui| {
+                        let perks = [
+                            ("🚀", "Dọn rác Dev (NPM, Cargo, Go hàng chục GB)"),
+                            ("🎯", "Timer Resolution 1.0ms tối ưu Game & Remote"),
+                            ("🛡️", "Khóa sạc Pin 80% chống phù và chai cell pin"),
+                            ("🔒", "Chặn Telemetry DiagTrack gửi dữ liệu ngầm"),
+                            ("🧹", "Deep Debloat: Tắt Copilot, Bing & Edge ngầm"),
+                            ("⚡", "Smart Auto-RAM Trim 24/7 ngầm không đơ máy"),
+                            ("🧠", "CPU Affinity & High Priority cho app chính"),
+                            ("💾", "Tạo điểm khôi phục an toàn (Restore Point)"),
+                        ];
+
+                        egui::Grid::new("pro_perks_grid_vertical")
+                            .num_columns(2)
+                            .spacing(Vec2::new(10.0, 7.0))
+                            .show(ui, |ui| {
+                                for (icon, text) in perks {
+                                    ui.allocate_ui_with_layout(
+                                        Vec2::new(26.0, 22.0),
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(RichText::new(icon).size(18.0));
+                                        },
+                                    );
+                                    ui.add(egui::Label::new(RichText::new(text).size(14.2).strong().color(p.text_primary)).wrap());
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                ui.add_space(6.0);
+
+                let hwid = crate::licensing::get_hardware_id();
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Email:").size(12.5).strong().color(p.text_primary));
-                    ui.add(egui::TextEdit::singleline(&mut self.input_license_email).hint_text("Nhập email mua hàng...").desired_width(200.0));
-                });
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Key:").size(12.5).strong().color(p.text_primary));
-                    ui.add(egui::TextEdit::singleline(&mut self.input_license_key).hint_text("OTPRO-XXXX-XXXX-XXXX").desired_width(200.0));
+                    ui.label(RichText::new("Mã máy (HWID):").size(13.5).color(p.text_secondary));
+                    ui.label(RichText::new(&hwid).size(13.5).strong().color(p.accent_blue));
+                    if ui.button(RichText::new("📋 Copy").size(12.5)).clicked() {
+                        ui.ctx().copy_text(hwid.clone());
+                        self.license_feedback_msg = "✓ Đã copy HWID vào Clipboard!".to_string();
+                    }
                 });
 
                 ui.horizontal(|ui| {
-                    let activate_btn = egui::Button::new(RichText::new("✓ Kích hoạt").size(12.5).strong().color(Color32::WHITE))
+                    ui.label(RichText::new("Email:").size(14.0).strong().color(p.text_primary));
+                    ui.add(egui::TextEdit::singleline(&mut self.input_license_email).hint_text("Nhập email nhận key...").desired_width(220.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Key:").size(14.0).strong().color(p.text_primary));
+                    ui.add(egui::TextEdit::singleline(&mut self.input_license_key).hint_text("OTPRO-... hoặc OTHW-...").desired_width(220.0));
+                });
+
+                ui.horizontal(|ui| {
+                    let activate_btn = egui::Button::new(RichText::new("✓ Kích hoạt").size(13.8).strong().color(Color32::WHITE))
                         .fill(p.primary_btn);
                     if ui.add(activate_btn).clicked() {
                         if save_license(&self.input_license_email, &self.input_license_key) {
                             self.license = load_license();
+                            self.autonomous.is_pro = is_pro_active(&self.license);
                             self.license_feedback_msg = "✓ Kích hoạt OmniTune Pro thành công! Cảm ơn bạn.".to_string();
                             self.autonomous.log("[VIP]", "Đã kích hoạt bản quyền OmniTune Pro vĩnh viễn.".to_string());
                         } else {
-                            self.license_feedback_msg = "✗ Mã bản quyền không hợp lệ. Vui lòng kiểm tra lại.".to_string();
+                            self.license_feedback_msg = "✗ Mã bản quyền không khớp với Email hoặc Máy này.".to_string();
                         }
                     }
 
+                    let buy_online_btn = egui::Button::new(RichText::new("💳 Mua Key ($9 / 220k)").size(13.8).strong().color(Color32::WHITE))
+                        .fill(p.warn_amber);
+                    if ui.add(buy_online_btn).on_hover_text("Mở trang thanh toán nhận key ngay tức thì").clicked() {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab("https://thuanlovevietnam.github.io/omnitune/#pricing"));
+                    }
+
                     if self.license.is_valid {
-                        if ui.button(RichText::new("Hủy kích hoạt").size(12.0)).clicked() {
+                        if ui.button(RichText::new("Hủy kích hoạt").size(13.0)).clicked() {
                             deactivate_license();
                             self.license = load_license();
+                            self.autonomous.is_pro = false;
                             self.license_feedback_msg = "Đã hủy kích hoạt bản quyền.".to_string();
                         }
                     }
                 });
 
-                ui.add_space(2.0);
-                ui.label(RichText::new("💡 Master Key dùng thử offline: OTPRO-LIFETIME-VIP-2026").size(12.0).color(p.accent_blue));
-
                 if !self.license_feedback_msg.is_empty() {
                     ui.add_space(2.0);
-                    ui.label(RichText::new(&self.license_feedback_msg).size(12.0).strong().color(p.warn_amber));
+                    ui.label(RichText::new(&self.license_feedback_msg).size(13.5).strong().color(p.warn_amber));
                 }
             });
             ui.add_space(6.0);
@@ -1429,32 +1644,36 @@ impl OptimizerApp {
                     ui.horizontal_wrapped(|ui| {
                         if ui.checkbox(
                             &mut self.autonomous.auto_pilot_enabled,
-                            RichText::new("Auto-Pilot").size(12.0).strong().color(p.success_green),
+                            RichText::new("Auto-Pilot").size(13.5).strong().color(p.success_green),
                         ).changed() {
                             self.sync_config();
                         }
                         ui.add_space(8.0);
                         if ui.checkbox(
                             &mut self.autonomous.auto_ram_enabled,
-                            RichText::new("Auto-RAM").size(12.0).strong().color(p.accent_blue),
+                            RichText::new("Auto-RAM").size(13.5).strong().color(p.accent_blue),
                         ).changed() {
-                            self.sync_config();
+                            if self.autonomous.auto_ram_enabled && !self.check_pro_gate("Auto-RAM 24/7") {
+                                self.autonomous.auto_ram_enabled = false;
+                            } else {
+                                self.sync_config();
+                            }
                         }
                         ui.add_space(8.0);
                         if ui.checkbox(
                             &mut self.autonomous.eco_qos_enabled,
-                            RichText::new("EcoQoS").size(12.0).strong().color(p.accent_blue),
+                            RichText::new("EcoQoS").size(13.5).strong().color(p.accent_blue),
                         ).changed() {
                             self.sync_config();
                         }
                     });
 
-                    ui.add_space(3.0);
+                    ui.add_space(4.0);
 
                     ui.horizontal_wrapped(|ui| {
                         if ui.checkbox(
                             &mut self.run_on_startup,
-                            RichText::new("Khởi động cùng Windows").size(12.0).color(p.text_primary),
+                            RichText::new("Khởi động cùng Windows").size(13.2).color(p.text_primary),
                         ).changed() {
                             let ok = set_autostart_registry(self.run_on_startup);
                             if ok {
@@ -1465,7 +1684,7 @@ impl OptimizerApp {
                         ui.add_space(10.0);
                         if ui.checkbox(
                             &mut self.config.minimize_to_tray,
-                            RichText::new("Thu nhỏ vào khay [X]").size(12.0).color(p.text_primary),
+                            RichText::new("Thu nhỏ vào khay [X]").size(13.2).color(p.text_primary),
                         ).changed() {
                             self.sync_config();
                         }
@@ -1816,12 +2035,36 @@ impl OptimizerApp {
 
         // 1. Thông tin cấu hình chi tiết
         ui.label(RichText::new("1. 📊 THÔNG TIN CẤU HÌNH & XUNG NHỊP THỜI GIAN THỰC").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
-        ui.add_space(2.0);
+        ui.add_space(3.0);
         let cur_cpu_mhz = self.sys.cpus().first().map(|c| c.frequency()).unwrap_or(self.autonomous.hardware_profile.cpu_base_mhz as u64) as u32;
-        ui.label(RichText::new(format!("• Bộ xử lý: {}", self.autonomous.hardware_profile.cpu_brand.trim())).size(typography::BODY_TEXT).strong().color(p.text_primary));
-        ui.label(RichText::new(format!("• Cấu trúc nhân: {} Nhân vật lý / {} Luồng logic", self.autonomous.hardware_profile.cpu_physical_cores, self.autonomous.hardware_profile.cpu_logical_cores)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-        ui.label(RichText::new(format!("• Xung nhịp: Cơ sở {} MHz • Thời gian thực {} MHz", self.autonomous.hardware_profile.cpu_base_mhz, cur_cpu_mhz)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-        ui.label(RichText::new(format!("• Phân bổ Quantum: {} • Giảm trễ Timer: {}", if self.win32_priority_boost { "Tối đa 3x (Ứng dụng chính)" } else { "Mặc định Windows" }, if self.timer_1ms_enabled { "1.0 ms (Low Latency)" } else { "15.6 ms (Mặc định)" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
+
+        egui::Frame::new()
+            .fill(Color32::TRANSPARENT)
+            .corner_radius(CornerRadius::same(spacing::CHIP_RADIUS))
+            .stroke(Stroke::new(1.0, p.card_border))
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                egui::Grid::new("cpu_config_table_vertical")
+                    .num_columns(2)
+                    .spacing(Vec2::new(18.0, 7.0))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("Bộ xử lý:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(self.autonomous.hardware_profile.cpu_brand.trim()).size(typography::BODY_TEXT).strong().color(p.text_primary));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Cấu trúc nhân:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(format!("{} Nhân vật lý / {} Luồng logic", self.autonomous.hardware_profile.cpu_physical_cores, self.autonomous.hardware_profile.cpu_logical_cores)).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Xung nhịp:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(format!("Cơ sở {} MHz • Thời gian thực {} MHz", self.autonomous.hardware_profile.cpu_base_mhz, cur_cpu_mhz)).size(typography::DETAIL_TEXT).strong().color(p.accent_blue));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Thiết lập tối ưu:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(format!("Quantum {} • Timer {}", if self.win32_priority_boost { "Tối đa 3x (Ứng dụng chính)" } else { "Mặc định Windows" }, if self.timer_1ms_enabled { "1.0 ms (Low Latency)" } else { "15.6 ms (Mặc định)" })).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
+                        ui.end_row();
+                    });
+            });
 
         ui.add_space(8.0);
 
@@ -1941,15 +2184,39 @@ impl OptimizerApp {
 
         // 1. Thông tin cấu hình chi tiết
         ui.label(RichText::new("1. 📊 DUNG LƯỢNG BỘ NHỚ VẬT LÝ & SWAP VIRTUAL").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
-        ui.add_space(2.0);
+        ui.add_space(3.0);
         let pf_used = self.mem_stats.pagefile_used_bytes;
         let pf_total = self.mem_stats.pagefile_total_bytes;
-        ui.label(RichText::new(format!("• RAM vật lý: Dùng {} / Tổng {:.1} GB", format_bytes(self.mem_stats.used_bytes), self.autonomous.hardware_profile.ram_total_gb)).size(typography::BODY_TEXT).strong().color(p.text_primary));
-        ui.label(RichText::new(format!("• Khả dụng: {} trống ({:.0}%)", format_bytes(self.mem_stats.free_bytes), (100.0 - self.mem_stats.load_percent as f32).max(0.0))).size(typography::DETAIL_TEXT).color(p.text_secondary));
-        if pf_total > 0 {
-            ui.label(RichText::new(format!("• Bộ nhớ ảo (Pagefile): Đã dùng {} / Tổng {}", format_bytes(pf_used), format_bytes(pf_total))).size(typography::DETAIL_TEXT).color(p.text_secondary));
-        }
-        ui.label(RichText::new(format!("• Nén RAM: {} • Auto Trim: Ngưỡng {}%", if self.memory_compression { "Đang bật (Giảm swap đĩa)" } else { "Tắt" }, self.ram_trim_threshold_pct)).size(typography::DETAIL_TEXT).color(p.text_secondary));
+
+        egui::Frame::new()
+            .fill(Color32::TRANSPARENT)
+            .corner_radius(CornerRadius::same(spacing::CHIP_RADIUS))
+            .stroke(Stroke::new(1.0, p.card_border))
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                egui::Grid::new("ram_config_table_vertical")
+                    .num_columns(2)
+                    .spacing(Vec2::new(18.0, 7.0))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("RAM vật lý:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(format!("Đã dùng {} / Tổng {:.1} GB", format_bytes(self.mem_stats.used_bytes), self.autonomous.hardware_profile.ram_total_gb)).size(typography::BODY_TEXT).strong().color(p.text_primary));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Bộ nhớ khả dụng:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(format!("{} trống ({:.0}% khả dụng)", format_bytes(self.mem_stats.free_bytes), (100.0 - self.mem_stats.load_percent as f32).max(0.0))).size(typography::DETAIL_TEXT).strong().color(p.success_green));
+                        ui.end_row();
+
+                        if pf_total > 0 {
+                            ui.label(RichText::new("Bộ nhớ ảo (Pagefile):").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                            ui.label(RichText::new(format!("Đã dùng {} / Tổng {}", format_bytes(pf_used), format_bytes(pf_total))).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
+                            ui.end_row();
+                        }
+
+                        ui.label(RichText::new("Thiết lập tối ưu:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(format!("Nén RAM: {} • Auto Trim: Ngưỡng {}%", if self.memory_compression { "Đang bật (Giảm swap đĩa)" } else { "Tắt" }, self.ram_trim_threshold_pct)).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
+                        ui.end_row();
+                    });
+            });
 
         ui.add_space(8.0);
 
@@ -2025,30 +2292,64 @@ impl OptimizerApp {
 
         // 1. Thông tin cấu hình chi tiết
         ui.label(RichText::new("1. 📊 THÔNG TIN NGUỒN ĐIỆN & CELL PIN THỰC TẾ").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
-        ui.add_space(2.0);
+        ui.add_space(3.0);
 
-        if self.power_status.has_battery {
-            let pwr_str = if self.power_status.discharge_rate_mw > 0 {
-                format!("{:.1}W xả", self.power_status.power_watts)
-            } else if self.power_status.charge_rate_mw > 0 {
-                format!("{:.1}W nạp", self.power_status.power_watts)
-            } else if self.power_status.is_ac_online {
-                "Cắm sạc AC".to_string()
-            } else {
-                "Dùng pin".to_string()
-            };
-            ui.label(RichText::new(format!("• Dòng điện: {} • Điện áp: {:.1} V", pwr_str, self.power_status.voltage_volts)).size(typography::BODY_TEXT).strong().color(p.text_primary));
+        egui::Frame::new()
+            .fill(Color32::TRANSPARENT)
+            .corner_radius(CornerRadius::same(spacing::CHIP_RADIUS))
+            .stroke(Stroke::new(1.0, p.card_border))
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                egui::Grid::new("pin_config_table_vertical")
+                    .num_columns(2)
+                    .spacing(Vec2::new(18.0, 7.0))
+                    .show(ui, |ui| {
+                        if self.power_status.has_battery {
+                            let pwr_str = if self.power_status.discharge_rate_mw > 0 {
+                                format!("{:.1}W xả", self.power_status.power_watts)
+                            } else if self.power_status.charge_rate_mw > 0 {
+                                format!("{:.1}W nạp", self.power_status.power_watts)
+                            } else if self.power_status.is_ac_online {
+                                "Cắm sạc AC".to_string()
+                            } else {
+                                "Dùng pin".to_string()
+                            };
 
-            for (idx, b) in self.dual_batteries.iter().enumerate() {
-                let full_wh = b.full_charge_capacity_mwh as f32 / 1000.0;
-                let design_wh = b.design_capacity_mwh as f32 / 1000.0;
-                ui.label(RichText::new(format!("• Pin {} ({}): Chai {:.1}% • {} chu kỳ sạc ({:.1} Wh / {:.1} Wh)", idx + 1, b.id, b.wear_percent, b.cycle_count, full_wh, design_wh)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-            }
-            ui.label(RichText::new(format!("• Chế độ quạt: {} • Độ sáng LED: {}%", if self.cooling_active { "Active (Làm mát tối đa)" } else { "Passive (0dB)" }, self.brightness_level)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-        } else {
-            ui.label(RichText::new("• Loại máy: PC để bàn (Desktop) • Nguồn AC 220V trực tiếp").size(typography::BODY_TEXT).strong().color(p.text_primary));
-            ui.label(RichText::new(format!("• Chế độ quạt: {} • Chống Sleep: {}", if self.cooling_active { "Active (Tản nhiệt tối đa)" } else { "Passive (0dB)" }, if self.keep_awake_mode == 2 { "Bật" } else { "Tắt" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
-        }
+                            ui.label(RichText::new("Nguồn & Dòng điện:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                            ui.label(RichText::new(format!("{} • Điện áp {:.1} V", pwr_str, self.power_status.voltage_volts)).size(typography::BODY_TEXT).strong().color(p.text_primary));
+                            ui.end_row();
+
+                            let bat_desc = if let Some(b) = self.dual_batteries.first() {
+                                format!("Chai {:.1}% • {} chu kỳ sạc ({:.1} Wh / {:.1} Wh)", b.wear_percent, b.cycle_count, b.full_charge_capacity_mwh as f32 / 1000.0, b.design_capacity_mwh as f32 / 1000.0)
+                            } else {
+                                "Pin Lithium-Ion chuẩn".to_string()
+                            };
+                            ui.label(RichText::new("Tình trạng cell pin:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                            ui.label(RichText::new(bat_desc).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
+                            ui.end_row();
+
+                            ui.label(RichText::new("Chế độ quạt:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                            ui.label(RichText::new(if self.cooling_active { "Active (Làm mát tối đa)" } else { "Passive (0dB)" }).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
+                            ui.end_row();
+
+                            ui.label(RichText::new("Màn hình & Tiết kiệm:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                            ui.label(RichText::new(format!("Độ sáng LED {}%", self.brightness_level)).size(typography::DETAIL_TEXT).strong().color(p.accent_blue));
+                            ui.end_row();
+                        } else {
+                            ui.label(RichText::new("Loại thiết bị:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                            ui.label(RichText::new("PC để bàn (Desktop) • Nguồn AC 220V trực tiếp").size(typography::BODY_TEXT).strong().color(p.text_primary));
+                            ui.end_row();
+
+                            ui.label(RichText::new("Chế độ quạt tản nhiệt:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                            ui.label(RichText::new(if self.cooling_active { "Active (Tản nhiệt tối đa)" } else { "Passive (0dB)" }).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
+                            ui.end_row();
+
+                            ui.label(RichText::new("Chế độ chống Sleep:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                            ui.label(RichText::new(if self.keep_awake_mode == 2 { "Đang bật (Giữ máy thức)" } else { "Tắt (Theo mặc định OS)" }).size(typography::DETAIL_TEXT).strong().color(p.accent_blue));
+                            ui.end_row();
+                        }
+                    });
+            });
 
         ui.add_space(8.0);
 
@@ -2162,16 +2463,40 @@ impl OptimizerApp {
 
         // 1. Thông tin cấu hình chi tiết
         ui.label(RichText::new("1. 📊 THÔNG SỐ Ổ ĐĨA & HỆ THỐNG TỆP TIN").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
-        ui.add_space(2.0);
+        ui.add_space(3.0);
         let drv_type = if self.autonomous.hardware_profile.is_ssd { "SSD Siêu tốc (NVMe/SATA)" } else { "HDD Cơ học" };
         let d_total = self.autonomous.hardware_profile.disk_total_bytes;
         let d_avail = self.autonomous.hardware_profile.disk_available_bytes;
         let d_used = d_total.saturating_sub(d_avail);
         let free_pct = if d_total > 0 { (d_avail as f32 / d_total as f32) * 100.0 } else { 50.0 };
 
-        ui.label(RichText::new(format!("• Ổ cứng: {} ({})", self.autonomous.hardware_profile.disk_name, drv_type)).size(typography::BODY_TEXT).strong().color(p.text_primary));
-        ui.label(RichText::new(format!("• Dung lượng: Dùng {} / Trống {} ({:.1} GB, {:.0}% trống)", format_bytes(d_used), format_bytes(d_avail), d_avail as f32 / 1e9, free_pct)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-        ui.label(RichText::new(format!("• Định dạng: {} • SSD TRIM: {} • SysMain: {}", self.autonomous.hardware_profile.disk_fs, if self.trim_enabled { "Đã kích hoạt" } else { "Tắt" }, if self.sysmain_disabled { "Đã tắt (Tốt cho SSD)" } else { "Bật" })).size(typography::DETAIL_TEXT).color(p.text_secondary));
+        egui::Frame::new()
+            .fill(Color32::TRANSPARENT)
+            .corner_radius(CornerRadius::same(spacing::CHIP_RADIUS))
+            .stroke(Stroke::new(1.0, p.card_border))
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                egui::Grid::new("drive_config_table_vertical")
+                    .num_columns(2)
+                    .spacing(Vec2::new(18.0, 7.0))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("Ổ đĩa hệ thống:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(format!("{} ({})", self.autonomous.hardware_profile.disk_name, drv_type)).size(typography::BODY_TEXT).strong().color(p.text_primary));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Dung lượng bộ nhớ:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(format!("Đã dùng {} / Trống {} ({:.1} GB, {:.0}% trống)", format_bytes(d_used), format_bytes(d_avail), d_avail as f32 / 1e9, free_pct)).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Định dạng tệp tin:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(&self.autonomous.hardware_profile.disk_fs).size(typography::DETAIL_TEXT).strong().color(p.accent_blue));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Thiết lập tối ưu:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(format!("SSD TRIM: {} • Dịch vụ SysMain: {}", if self.trim_enabled { "Đã kích hoạt" } else { "Tắt" }, if self.sysmain_disabled { "Đã tắt (Tốt cho SSD)" } else { "Bật" })).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
+                        ui.end_row();
+                    });
+            });
 
         ui.add_space(8.0);
 
@@ -2241,17 +2566,18 @@ impl OptimizerApp {
                 self.criteria_apply_msg = format!("✓ Đã dọn an toàn {}.", format_bytes(freed));
             }
 
-            let dev_btn_text = if self.license.is_valid {
+            let pro_unlocked = is_pro_active(&self.license);
+            let dev_btn_text = if pro_unlocked {
                 "🚀 Dọn Dev Cache (NPM/Go/Cargo)"
             } else {
                 "★ [PRO] Dọn Dev Cache"
             };
             let clean_dev_btn = egui::Button::new(RichText::new(dev_btn_text).size(typography::BTN_NORMAL).color(Color32::WHITE))
-                .fill(if self.license.is_valid { Color32::from_rgb(147, 51, 234) } else { p.warn_amber });
+                .fill(if pro_unlocked { Color32::from_rgb(147, 51, 234) } else { p.warn_amber });
             if ui.add(clean_dev_btn).clicked() {
-                if !self.license.is_valid {
+                if !pro_unlocked {
                     self.show_license_modal = true;
-                    self.license_feedback_msg = "Tính năng dọn cache lập trình viên (NPM/Go/Cargo hàng GB) chỉ có trên OmniTune Pro. Nhập key để mở khóa!".to_string();
+                    self.license_feedback_msg = "Tính năng dọn cache lập trình viên (NPM/Go/Cargo hàng GB) chỉ có trên OmniTune Pro (hoặc trải nghiệm dùng thử 7 ngày). Mở khóa ngay!".to_string();
                 } else {
                     let targets = get_default_targets();
                     let mut freed = 0u64;
@@ -2289,8 +2615,12 @@ impl OptimizerApp {
                     if ui.button(RichText::new("🧹 Dọn mục này").size(typography::BTN_SMALL)).clicked() {
                         let targets = get_default_targets();
                         if let Some(t) = targets.into_iter().find(|t| t.name == item.name) {
-                            let (f, _) = clean_target(&t);
-                            self.criteria_apply_msg = format!("✓ Đã dọn {} từ '{}'", format_bytes(f), item.name);
+                            if t.tier == CleanTier::Developer && !self.check_pro_gate("Dọn dẹp Dev Cache") {
+                                // Gated by Pro
+                            } else {
+                                let (f, _) = clean_target(&t);
+                                self.criteria_apply_msg = format!("✓ Đã dọn {} từ '{}'", format_bytes(f), item.name);
+                            }
                         }
                     }
                     ui.end_row();
@@ -2404,13 +2734,18 @@ impl OptimizerApp {
                 if render_switch_chip(
                     ui,
                     &p,
-                    "7. 🎯 Giảm trễ chuột & game",
+                    "7. ★ [PRO] Giảm trễ chuột & game",
                     "Triệt tiêu trễ chuột & giật khung hình (Timer Resolution 1ms)",
                     &mut self.timer_1ms_enabled,
                     Some(("● 1.0 ms", "○ 15.6 ms")),
                 ) {
-                    set_timer_resolution_1ms(self.timer_1ms_enabled);
-                    self.sync_config();
+                    if self.timer_1ms_enabled && !self.check_pro_gate("Timer Resolution 1.0ms") {
+                        self.timer_1ms_enabled = false;
+                        set_timer_resolution_1ms(false);
+                    } else {
+                        set_timer_resolution_1ms(self.timer_1ms_enabled);
+                        self.sync_config();
+                    }
                 }
             },
             |ui| {
@@ -2527,13 +2862,18 @@ impl OptimizerApp {
                 if render_switch_chip(
                     ui,
                     &p,
-                    "15. 🛡️ Chặn gửi dữ liệu ngầm",
+                    "15. ★ [PRO] Chặn gửi dữ liệu ngầm",
                     "Dừng thu thập và gửi dữ liệu chẩn đoán về Microsoft (DiagTrack)",
                     &mut self.disable_telemetry,
                     Some(("● ĐÃ CHẶN", "○ ĐANG BẬT")),
                 ) {
-                    crate::startup::toggle_telemetry(self.disable_telemetry);
-                    self.sync_config();
+                    if self.disable_telemetry && !self.check_pro_gate("Chặn telemetry DiagTrack") {
+                        self.disable_telemetry = false;
+                        crate::startup::toggle_telemetry(false);
+                    } else {
+                        crate::startup::toggle_telemetry(self.disable_telemetry);
+                        self.sync_config();
+                    }
                 }
             },
             |ui| {
@@ -2579,6 +2919,44 @@ impl OptimizerApp {
                 );
             },
         );
+
+        // Row 10: Deep Debloat & Pro CPU Affinity
+        render_settings_row!(
+            ui,
+            |ui| {
+                if render_switch_chip(
+                    ui,
+                    &p,
+                    "19. ★ [PRO] Deep Debloat hệ thống",
+                    "Tắt Windows Copilot, Bing Search Start Menu và Edge chạy ngầm",
+                    &mut self.deep_debloat,
+                    Some(("● ĐÃ CHẶN", "○ MẶC ĐỊNH")),
+                ) {
+                    if self.deep_debloat && !self.check_pro_gate("Deep Debloat (Tắt Copilot/Bing/Edge)") {
+                        self.deep_debloat = false;
+                        let _ = crate::protection::apply_deep_debloat(false);
+                    } else {
+                        let msgs = crate::protection::apply_deep_debloat(self.deep_debloat);
+                        self.criteria_apply_msg = format!("✓ Deep Debloat: {}", msgs.join(" | "));
+                        self.sync_config();
+                    }
+                }
+            },
+            |ui| {
+                let affinity_status = if is_pro_active(&self.license) {
+                    ("● ĐANG BẬT", p.success_green)
+                } else {
+                    ("★ PRO VIP", p.warn_amber)
+                };
+                render_info_chip(
+                    ui,
+                    &p,
+                    "20. ★ [PRO] Điều phối CPU Affinity",
+                    "Gán toàn bộ nhân CPU & High Priority cho ứng dụng đang focus",
+                    Some((affinity_status.0, affinity_status.1)),
+                );
+            },
+        );
     }
 
     fn render_ram_partition_settings(&mut self, ui: &mut egui::Ui) {
@@ -2591,14 +2969,18 @@ impl OptimizerApp {
                 render_chip_frame(ui, p.is_dark, p.card_border, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(
-                            RichText::new("1. 🧹 Tự động dọn RAM khi đầy")
+                            RichText::new("1. ★ [PRO] Tự động dọn RAM khi đầy")
                                 .size(typography::CHIP_TITLE)
                                 .strong()
                                 .color(p.text_primary),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if render_switch(ui, &mut self.autonomous.auto_ram_enabled) {
-                                self.sync_config();
+                                if self.autonomous.auto_ram_enabled && !self.check_pro_gate("Auto-RAM 24/7") {
+                                    self.autonomous.auto_ram_enabled = false;
+                                } else {
+                                    self.sync_config();
+                                }
                             }
                         });
                     });
@@ -2706,14 +3088,19 @@ impl OptimizerApp {
                 if render_switch_chip(
                     ui,
                     &p,
-                    "2. 🛡️ Khóa sạc 80% bảo vệ pin",
+                    "2. ★ [PRO] Khóa sạc 80% bảo vệ pin",
                     "Chống chai pin và phồng cell lithium khi cắm sạc liên tục",
                     &mut self.protection.battery_threshold_enabled,
                     None,
                 ) {
-                    let st = self.protection.battery_threshold_enabled;
-                    let _ = set_battery_threshold(st, 80);
-                    self.sync_config();
+                    if self.protection.battery_threshold_enabled && !self.check_pro_gate("Khóa sạc pin 80%") {
+                        self.protection.battery_threshold_enabled = false;
+                        let _ = set_battery_threshold(false, 80);
+                    } else {
+                        let st = self.protection.battery_threshold_enabled;
+                        let _ = set_battery_threshold(st, 80);
+                        self.sync_config();
+                    }
                 }
             },
         );
@@ -2885,6 +3272,43 @@ impl OptimizerApp {
                         }
                         self.criteria_apply_msg =
                             format!("✓ Đã dọn sạch {} rác an toàn.", format_bytes(freed));
+                    },
+                );
+            },
+        );
+
+        // Row 4: System Safety & Restore Point
+        render_settings_row!(
+            ui,
+            |ui| {
+                render_action_chip(
+                    ui,
+                    &p,
+                    "7. ★ [PRO] Tạo điểm khôi phục (Restore Point)",
+                    "Sao lưu trạng thái hệ thống trước khi tinh chỉnh sâu",
+                    "💾 Tạo Restore Point",
+                    || {
+                        if !self.check_pro_gate("Tạo điểm khôi phục (Restore Point)") {
+                            return;
+                        }
+                        match create_restore_point() {
+                            Ok(msg) => self.criteria_apply_msg = format!("✓ {}", msg),
+                            Err(e) => self.criteria_apply_msg = format!("✗ {}", e),
+                        }
+                    },
+                );
+            },
+            |ui| {
+                render_action_chip(
+                    ui,
+                    &p,
+                    "8. 🔄 Khôi phục mặc định Windows",
+                    "Đưa Power Schemes, Timer, GameDVR và Telemetry về gốc",
+                    "↩️ Reset về mặc định",
+                    || {
+                        let logs = restore_windows_defaults();
+                        self.criteria_apply_msg = format!("✓ Đã khôi phục: {}", logs.join(" | "));
+                        self.sync_config();
                     },
                 );
             },

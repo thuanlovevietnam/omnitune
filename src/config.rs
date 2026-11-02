@@ -97,6 +97,8 @@ pub struct AppConfig {
     // Nhóm 7: Telemetry & DiagTrack
     #[serde(default = "default_true")]
     pub disable_telemetry: bool,
+    #[serde(default)]
+    pub deep_debloat: bool,
 }
 
 impl Default for AppConfig {
@@ -136,6 +138,7 @@ impl Default for AppConfig {
             system_responsiveness_zero: true,
             tcp_ecn_enabled: true,
             disable_telemetry: true,
+            deep_debloat: false,
         }
     }
 }

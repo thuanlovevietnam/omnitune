@@ -64,6 +64,7 @@ pub fn apply_scenario(
     hw: &HardwareProfile,
     is_ac: bool,
     battery_pct: u8,
+    is_pro: bool,
 ) -> String {
     match scenario {
         Scenario::Default => {
@@ -154,10 +155,18 @@ pub fn apply_scenario(
             let _ = crate::power::set_cpu_max_state_ac(cpu_limit);
             let _ = crate::power::set_cooling_policy(true);
 
-            // 3. Multimedia high-resolution timer (1.0ms)
-            unsafe {
-                let _ = timeBeginPeriod(1);
-            }
+            // 3. Multimedia high-resolution timer (1.0ms) - Only for Pro
+            let timer_status = if is_pro {
+                unsafe {
+                    let _ = timeBeginPeriod(1);
+                }
+                "Timer 1.0ms"
+            } else {
+                unsafe {
+                    let _ = timeEndPeriod(1);
+                }
+                "Timer 15.6ms (Cần Pro để lên 1.0ms)"
+            };
 
             // 4. Disable Windows GameDVR background capture
             let _ = Command::new("reg")
@@ -186,7 +195,8 @@ pub fn apply_scenario(
             let (freed, _) = crate::memory::trim_working_sets(sys);
 
             format!(
-                "Đã bật kịch bản Game & Đồ họa: Timer 1.0ms, tắt GameDVR ngầm, tối ưu GPU [{}], giải phóng {} RAM làm VRAM, hạ {} app ngầm.",
+                "Đã bật kịch bản Game & Đồ họa: {}, tắt GameDVR ngầm, tối ưu GPU [{}], giải phóng {} RAM làm VRAM, hạ {} app ngầm.",
+                timer_status,
                 hw.gpu_name,
                 crate::cleaner::format_bytes(freed),
                 deprioritized

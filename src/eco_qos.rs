@@ -1,9 +1,10 @@
 use sysinfo::System;
 use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::Threading::{
-    OpenProcess, SetPriorityClass, SetProcessInformation, ABOVE_NORMAL_PRIORITY_CLASS,
-    PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
-    PROCESS_POWER_THROTTLING_STATE, PROCESS_SET_INFORMATION, ProcessPowerThrottling,
+    OpenProcess, SetPriorityClass, SetProcessAffinityMask, SetProcessInformation,
+    ABOVE_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+    PROCESS_POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING_STATE,
+    PROCESS_SET_INFORMATION, ProcessPowerThrottling,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
@@ -111,4 +112,32 @@ pub fn apply_foreground_boost_and_eco(
     }
 
     (boosted, eco_throttled)
+}
+
+pub fn apply_pro_foreground_boost(pid: u32, total_cores: usize) -> bool {
+    if pid <= 4 {
+        return false;
+    }
+    unsafe {
+        let handle = OpenProcess(PROCESS_SET_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+
+        // Cấp High Priority Class cho ứng dụng đang focus
+        let _ = SetPriorityClass(handle, HIGH_PRIORITY_CLASS);
+
+        // Gán CPU Affinity toàn bộ core logic
+        if total_cores > 0 {
+            let mask = if total_cores >= (std::mem::size_of::<usize>() * 8) {
+                usize::MAX
+            } else {
+                (1usize << total_cores).wrapping_sub(1)
+            };
+            let _ = SetProcessAffinityMask(handle, mask);
+        }
+
+        CloseHandle(handle);
+        true
+    }
 }

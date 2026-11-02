@@ -2,33 +2,33 @@ use eframe::egui::{self, Color32, CornerRadius, Margin, Stroke, Theme, Vec2};
 use std::sync::Arc;
 
 pub mod typography {
-    pub const HERO_SCORE: f32 = 38.0;
-    pub const STAT_VALUE: f32 = 28.0;
-    pub const APP_TITLE: f32 = 23.0;
-    pub const SECTION_TITLE: f32 = 14.0;
-    pub const CARD_TITLE: f32 = 15.0;
-    pub const CHIP_TITLE: f32 = 13.0;
-    pub const CHIP_DESC: f32 = 11.8;
-    pub const BODY_TEXT: f32 = 12.5;
-    pub const DETAIL_TEXT: f32 = 12.2;
-    pub const BTN_LARGE: f32 = 15.0;
-    pub const BTN_NORMAL: f32 = 12.5;
-    pub const BTN_SMALL: f32 = 11.5;
-    pub const SWITCH_TEXT: f32 = 12.2;
+    pub const HERO_SCORE: f32 = 44.0;
+    pub const STAT_VALUE: f32 = 32.0;
+    pub const APP_TITLE: f32 = 26.0;
+    pub const SECTION_TITLE: f32 = 16.5;
+    pub const CARD_TITLE: f32 = 17.0;
+    pub const CHIP_TITLE: f32 = 14.8;
+    pub const CHIP_DESC: f32 = 13.2;
+    pub const BODY_TEXT: f32 = 14.2;
+    pub const DETAIL_TEXT: f32 = 13.5;
+    pub const BTN_LARGE: f32 = 16.5;
+    pub const BTN_NORMAL: f32 = 14.0;
+    pub const BTN_SMALL: f32 = 13.0;
+    pub const SWITCH_TEXT: f32 = 13.2;
 }
 
 pub mod spacing {
     use eframe::egui::Vec2;
 
-    pub const SWITCH_SIZE: Vec2 = Vec2::new(78.0, 26.0);
-    pub const HERO_BTN_HEIGHT: f32 = 42.0;
+    pub const SWITCH_SIZE: Vec2 = Vec2::new(90.0, 28.0);
+    pub const HERO_BTN_HEIGHT: f32 = 46.0;
     #[allow(dead_code)]
-    pub const CARD_ACTION_BTN_HEIGHT: f32 = 32.0;
-    pub const MASTER_APPLY_BTN_HEIGHT: f32 = 36.0;
-    pub const MINI_BAR_HEIGHT: f32 = 5.0;
+    pub const CARD_ACTION_BTN_HEIGHT: f32 = 34.0;
+    pub const MASTER_APPLY_BTN_HEIGHT: f32 = 40.0;
+    pub const MINI_BAR_HEIGHT: f32 = 6.0;
     pub const CARD_RADIUS: u8 = 8;
     pub const CHIP_RADIUS: u8 = 8;
-    pub const SWITCH_RADIUS: u8 = 13;
+    pub const SWITCH_RADIUS: u8 = 14;
     pub const BTN_RADIUS: u8 = 6;
 }
 
@@ -193,6 +193,11 @@ pub fn apply_theme(ctx: &egui::Context, mode: ThemeMode) -> ThemePalette {
         s.spacing.scroll.bar_width = 8.0;
         s.spacing.scroll.handle_min_length = 28.0;
         s.spacing.scroll.floating = true;
+        s.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(14.0));
+        s.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(14.0));
+        s.text_styles.insert(egui::TextStyle::Heading, egui::FontId::proportional(22.0));
+        s.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(13.5));
+        s.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(12.5));
     });
 
     visuals.override_text_color = Some(palette.text_primary);

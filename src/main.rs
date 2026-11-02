@@ -68,9 +68,9 @@ fn main() -> eframe::Result {
             )
         };
 
-        // Smart Autonomous Widget size: 750x670 px (Comfortable dashboard layout)
-        let w = 750.0f32.min(screen_w - 20.0);
-        let h = 670.0f32.min(screen_h - 40.0).max(540.0);
+        // Smart Autonomous Widget size: 820x720 px (Comfortable dashboard layout)
+        let w = 820.0f32.min(screen_w - 20.0);
+        let h = 720.0f32.min(screen_h - 40.0).max(580.0);
         let x = ((screen_w - w) / 2.0).max(0.0);
         let y = ((screen_h - h) / 2.0).max(0.0);
         (x, y, w, h)
@@ -80,16 +80,18 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Glow,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([win_w, win_h])
-            .with_min_inner_size([640.0, 540.0])
+            .with_min_inner_size([720.0, 560.0])
             .with_position([pos_x, pos_y])
             .with_visible(!start_minimized)
             .with_title("OmniTune - Trợ Lý Tối Ưu Hệ Thống"),
         ..Default::default()
     };
 
-    eframe::run_native(
+    let _ = eframe::run_native(
         "OmniTune Optimizer",
         options,
         Box::new(|cc| Ok(Box::new(OptimizerApp::new(cc)))),
-    )
+    );
+
+    std::process::exit(0);
 }
