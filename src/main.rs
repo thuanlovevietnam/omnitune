@@ -3,6 +3,7 @@
 mod app;
 mod autonomous_engine;
 mod battery_info;
+mod battery_limiter;
 mod cleaner;
 mod eco_qos;
 mod memory;

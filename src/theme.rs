@@ -200,7 +200,7 @@ pub fn apply_theme(ctx: &egui::Context, mode: ThemeMode) -> ThemePalette {
         s.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(12.5));
     });
 
-    visuals.override_text_color = Some(palette.text_primary);
+    visuals.override_text_color = None;
     visuals.panel_fill = palette.bg_main;
     visuals.window_fill = palette.bg_main;
 

@@ -3,9 +3,9 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
 use windows_sys::Win32::System::Registry::{
-    RegCloseKey, RegCreateKeyW, RegEnumValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
-    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_BINARY, REG_DWORD,
-    REG_EXPAND_SZ, REG_SZ,
+    RegCloseKey, RegCreateKeyW, RegEnumKeyExW, RegEnumValueW, RegOpenKeyExW, RegQueryValueExW,
+    RegSetValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_BINARY,
+    REG_DWORD, REG_EXPAND_SZ, REG_SZ,
 };
 
 fn to_wide(s: &str) -> Vec<u16> {
@@ -151,6 +151,126 @@ pub fn reg_read_binary(root: HKEY, subkey: &str, value_name: &str) -> Option<Vec
     }
 }
 
+pub fn reg_enum_subkeys(root: HKEY, subkey: &str) -> Vec<String> {
+    unsafe {
+        let subkey_w = to_wide(subkey);
+        let mut hkey: HKEY = std::mem::zeroed();
+        if RegOpenKeyExW(root, subkey_w.as_ptr(), 0, KEY_READ, &mut hkey) != 0 {
+            return Vec::new();
+        }
+
+        let mut subkeys = Vec::new();
+        let mut index = 0u32;
+        let mut name_buf = [0u16; 256];
+        loop {
+            let mut name_len = name_buf.len() as u32;
+            let res = RegEnumKeyExW(
+                hkey,
+                index,
+                name_buf.as_mut_ptr(),
+                &mut name_len,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
+            if res != 0 {
+                break;
+            }
+            let s = String::from_utf16_lossy(&name_buf[..name_len as usize]);
+            subkeys.push(s);
+            index += 1;
+        }
+        RegCloseKey(hkey);
+        subkeys
+    }
+}
+
+pub fn reg_key_exists(root: HKEY, subkey: &str) -> bool {
+    unsafe {
+        let subkey_w = to_wide(subkey);
+        let mut hkey: HKEY = std::mem::zeroed();
+        if RegOpenKeyExW(root, subkey_w.as_ptr(), 0, KEY_READ, &mut hkey) == 0 {
+            RegCloseKey(hkey);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OemVendor {
+    Lenovo,
+    Asus,
+    Dell,
+    Hp,
+    Msi,
+    Acer,
+    Apple,
+    Microsoft,
+    Samsung,
+    Other,
+}
+
+impl OemVendor {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            OemVendor::Lenovo => "Lenovo",
+            OemVendor::Asus => "ASUS",
+            OemVendor::Dell => "Dell",
+            OemVendor::Hp => "HP",
+            OemVendor::Msi => "MSI",
+            OemVendor::Acer => "Acer",
+            OemVendor::Apple => "Apple",
+            OemVendor::Microsoft => "Microsoft",
+            OemVendor::Samsung => "Samsung",
+            OemVendor::Other => "Khác",
+        }
+    }
+}
+
+pub fn get_device_oem_vendor() -> (OemVendor, String) {
+    let subkey = r"HARDWARE\DESCRIPTION\System\BIOS";
+    let sys_mfg = reg_read_string(HKEY_LOCAL_MACHINE, subkey, "SystemManufacturer")
+        .unwrap_or_default();
+    let board_mfg = reg_read_string(HKEY_LOCAL_MACHINE, subkey, "BaseBoardManufacturer")
+        .unwrap_or_default();
+
+    let combined = format!("{} {}", sys_mfg, board_mfg).to_lowercase();
+    let raw_name = if !sys_mfg.is_empty() {
+        sys_mfg
+    } else if !board_mfg.is_empty() {
+        board_mfg
+    } else {
+        "Unknown".to_string()
+    };
+
+    let vendor = if combined.contains("lenovo") || combined.contains("ibm") {
+        OemVendor::Lenovo
+    } else if combined.contains("asus") || combined.contains("asustek") {
+        OemVendor::Asus
+    } else if combined.contains("dell") || combined.contains("alienware") {
+        OemVendor::Dell
+    } else if combined.contains("hp") || combined.contains("hewlett-packard") {
+        OemVendor::Hp
+    } else if combined.contains("msi") || combined.contains("micro-star") {
+        OemVendor::Msi
+    } else if combined.contains("acer") {
+        OemVendor::Acer
+    } else if combined.contains("apple") {
+        OemVendor::Apple
+    } else if combined.contains("microsoft") {
+        OemVendor::Microsoft
+    } else if combined.contains("samsung") {
+        OemVendor::Samsung
+    } else {
+        OemVendor::Other
+    };
+
+    (vendor, raw_name)
+}
+
 pub fn get_device_product_name_native() -> String {
     let subkey = r"HARDWARE\DESCRIPTION\System\BIOS";
     let prod_name = reg_read_string(HKEY_LOCAL_MACHINE, subkey, "SystemProductName");
@@ -175,13 +295,22 @@ pub fn check_hibernate_enabled_native() -> bool {
     .unwrap_or(false)
 }
 
+#[allow(dead_code)]
 pub fn get_battery_threshold_native() -> (bool, u32) {
-    let subkey = r"SOFTWARE\WOW6432Node\Lenovo\PWRMGRV\ConfKeys\Data\1ZM8D35GNEF";
-    let enabled = reg_read_u32(HKEY_LOCAL_MACHINE, subkey, "ChargeStopControl")
-        .map(|v| v == 1)
-        .unwrap_or(false);
-    let pct = reg_read_u32(HKEY_LOCAL_MACHINE, subkey, "ChargeStopPercentage").unwrap_or(80);
-    (enabled, pct)
+    for base in [
+        r"SOFTWARE\WOW6432Node\Lenovo\PWRMGRV\ConfKeys\Data",
+        r"SOFTWARE\Lenovo\PWRMGRV\ConfKeys\Data",
+    ] {
+        let subkeys = reg_enum_subkeys(HKEY_LOCAL_MACHINE, base);
+        for sub in subkeys {
+            let p = format!(r"{}\{}", base, sub);
+            if let Some(enabled) = reg_read_u32(HKEY_LOCAL_MACHINE, &p, "ChargeStopControl") {
+                let pct = reg_read_u32(HKEY_LOCAL_MACHINE, &p, "ChargeStopPercentage").unwrap_or(80);
+                return (enabled == 1, pct);
+            }
+        }
+    }
+    (false, 80)
 }
 
 pub fn get_gamedvr_native() -> bool {

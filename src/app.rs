@@ -184,7 +184,7 @@ pub struct OptimizerApp {
 
 fn render_switch_custom(ui: &mut egui::Ui, value: &mut bool, on_text: &str, off_text: &str) -> bool {
     let (text, fill_color) = if *value {
-        (on_text, Color32::from_rgb(16, 149, 60))
+        (on_text, Color32::from_rgb(22, 128, 61))
     } else {
         (off_text, Color32::from_rgb(100, 116, 139))
     };
@@ -324,14 +324,16 @@ fn render_slider_chip<T: egui::emath::Numeric>(
             );
             if let Some((preset_label, preset_val)) = preset {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button(
-                            RichText::new(preset_label)
-                                .size(typography::BTN_SMALL)
-                                .strong(),
-                        )
-                        .clicked()
-                    {
+                    let preset_btn = egui::Button::new(
+                        RichText::new(preset_label)
+                            .size(typography::BTN_SMALL)
+                            .strong()
+                            .color(palette.text_primary),
+                    )
+                    .fill(palette.tab_inactive_bg)
+                    .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+
+                    if ui.add(preset_btn).clicked() {
                         *value = preset_val;
                         changed = true;
                     }
@@ -1008,7 +1010,9 @@ impl OptimizerApp {
         // Nhóm 6: Nguồn điện, Pin & Tản nhiệt (4)
         let _ = set_cooling_policy(self.cooling_active);
         if is_pro {
-            let _ = set_battery_threshold(self.protection.battery_threshold_enabled, 80);
+            if self.protection.battery_support.kind == crate::battery_limiter::BatterySupportKind::Supported {
+                let _ = set_battery_threshold(self.protection.battery_threshold_enabled, 80);
+            }
         } else {
             self.protection.battery_threshold_enabled = false;
         }
@@ -1064,7 +1068,7 @@ impl OptimizerApp {
             tips.push("Chưa bật Hibernate, laptop có thể hao pin khi ngủ Sleep S3.".to_string());
         }
 
-        if self.power_status.is_ac_online && !self.protection.battery_threshold_enabled {
+        if self.power_status.has_battery && self.power_status.is_ac_online && !self.protection.battery_threshold_enabled {
             tips.push("Đang cắm sạc: Bật ngưỡng 80% trong phần cài đặt để chống phù pin.".to_string());
         }
 
@@ -1118,7 +1122,9 @@ impl OptimizerApp {
                     self.top_processes = res.top_processes;
                     self.startup_apps = res.startup_apps;
                     self.protection = res.protection;
-                    if self.config.battery_threshold_80 {
+                    if self.config.battery_threshold_80
+                        && self.protection.battery_support.kind == crate::battery_limiter::BatterySupportKind::Supported
+                    {
                         self.protection.battery_threshold_enabled = true;
                     }
                     self.is_telemetry_running = res.is_telemetry_running;
@@ -1415,7 +1421,7 @@ impl OptimizerApp {
                     ui.label(RichText::new(format!("Có bản cập nhật mới: {}", ver)).size(12.0).strong().color(p.accent_blue));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let dl_btn = egui::Button::new(RichText::new("Tải ngay ↗").size(11.5).strong().color(Color32::WHITE))
-                            .fill(p.accent_blue)
+                            .fill(p.primary_btn)
                             .corner_radius(CornerRadius::same(6));
                         if ui.add(dl_btn).clicked() {
                             ui.ctx().open_url(egui::OpenUrl::new_tab(url));
@@ -1470,8 +1476,8 @@ impl OptimizerApp {
 
                 // Pro / License status button
                 if self.license.is_valid {
-                    let pro_badge = egui::Button::new(RichText::new("★ PRO").size(13.5).strong().color(Color32::WHITE))
-                        .fill(Color32::from_rgb(217, 119, 6))
+                    let pro_badge = egui::Button::new(RichText::new("★ PRO").size(13.5).strong().color(Color32::from_rgb(15, 23, 42)))
+                        .fill(Color32::from_rgb(245, 158, 11))
                         .corner_radius(CornerRadius::same(6));
                     if ui.add(pro_badge).on_hover_text(format!("OmniTune Pro: {}", self.license.licensee)).clicked() {
                         self.show_license_modal = !self.show_license_modal;
@@ -1497,8 +1503,8 @@ impl OptimizerApp {
                             }
                         }
                         TrialStatus::NotStarted => {
-                            let buy_btn = egui::Button::new(RichText::new("★ Lên PRO").size(13.5).strong().color(Color32::WHITE))
-                                .fill(Color32::from_rgb(217, 119, 6))
+                            let buy_btn = egui::Button::new(RichText::new("★ Lên PRO").size(13.5).strong().color(Color32::from_rgb(15, 23, 42)))
+                                .fill(Color32::from_rgb(245, 158, 11))
                                 .corner_radius(CornerRadius::same(6));
                             if ui.add(buy_btn).on_hover_text("Nâng cấp lên bản OmniTune Pro (hoặc dùng thử 7 ngày)").clicked() {
                                 self.show_license_modal = !self.show_license_modal;
@@ -1540,7 +1546,7 @@ impl OptimizerApp {
                         match trial {
                             TrialStatus::NotStarted => {
                                 let start_trial_btn = egui::Button::new(RichText::new("🎁 Dùng thử 7 ngày").size(13.0).strong().color(Color32::WHITE))
-                                    .fill(Color32::from_rgb(16, 149, 60))
+                                    .fill(Color32::from_rgb(22, 128, 61))
                                     .min_size(Vec2::new(ui.available_width(), 32.0))
                                     .corner_radius(CornerRadius::same(6));
                                 if ui.add(start_trial_btn).on_hover_text("Dùng thử đầy đủ tính năng Pro trong 7 ngày không cần thẻ").clicked() {
@@ -1609,8 +1615,8 @@ impl OptimizerApp {
                             }
                         }
 
-                        let buy_online_btn = egui::Button::new(RichText::new("💳 Mua Key ($9)").size(13.0).strong().color(Color32::WHITE))
-                            .fill(Color32::from_rgb(217, 119, 6))
+                        let buy_online_btn = egui::Button::new(RichText::new("💳 Mua Key ($9)").size(13.0).strong().color(Color32::from_rgb(15, 23, 42)))
+                            .fill(Color32::from_rgb(245, 158, 11))
                             .min_size(Vec2::new(90.0, 30.0))
                             .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
                         if ui.add(buy_online_btn).on_hover_text("Mở trang thanh toán nhận key ngay tức thì").clicked() {
@@ -2009,14 +2015,15 @@ impl OptimizerApp {
                 let settings_active = self.partition_sub_tab == PartitionSubTab::Settings;
                 let pro_active = self.partition_sub_tab == PartitionSubTab::Pro;
 
+                let active_tab_bg = p.primary_btn;
                 let info_btn = egui::Button::new(
                     RichText::new("ℹ️ THÔNG TIN")
                         .size(typography::CHIP_TITLE)
                         .strong()
                         .color(if info_active { Color32::WHITE } else { p.text_primary }),
                 )
-                .fill(if info_active { p.accent_blue } else { p.card_bg })
-                .stroke(Stroke::new(1.0, if info_active { p.accent_blue } else { p.card_border }))
+                .fill(if info_active { active_tab_bg } else { p.card_bg })
+                .stroke(Stroke::new(1.0, if info_active { active_tab_bg } else { p.card_border }))
                 .min_size(Vec2::new(0.0, 34.0))
                 .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
 
@@ -2030,8 +2037,8 @@ impl OptimizerApp {
                         .strong()
                         .color(if settings_active { Color32::WHITE } else { p.text_primary }),
                 )
-                .fill(if settings_active { p.accent_blue } else { p.card_bg })
-                .stroke(Stroke::new(1.0, if settings_active { p.accent_blue } else { p.card_border }))
+                .fill(if settings_active { active_tab_bg } else { p.card_bg })
+                .stroke(Stroke::new(1.0, if settings_active { active_tab_bg } else { p.card_border }))
                 .min_size(Vec2::new(0.0, 34.0))
                 .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
 
@@ -2083,7 +2090,7 @@ impl OptimizerApp {
                             .strong()
                             .color(Color32::WHITE),
                     )
-                    .fill(p.success_green)
+                    .fill(Color32::from_rgb(22, 128, 61))
                     .min_size(Vec2::new(ui.available_width(), 38.0))
                     .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
 
@@ -2260,7 +2267,7 @@ impl OptimizerApp {
                                         .strong()
                                         .color(Color32::WHITE),
                                 )
-                                .fill(Color32::from_rgb(16, 149, 60))
+                                .fill(Color32::from_rgb(22, 128, 61))
                                 .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
                                 if ui.add(trial_btn).clicked() {
                                     self.license = start_trial();
@@ -2878,8 +2885,13 @@ impl OptimizerApp {
 
             let pro_unlocked = is_pro_active(&self.license);
             let dev_btn_text = "Dọn Dev Cache";
-            let clean_dev_btn = egui::Button::new(RichText::new(dev_btn_text).size(typography::BTN_NORMAL).strong().color(Color32::WHITE))
-                .fill(if pro_unlocked { Color32::from_rgb(147, 51, 234) } else { Color32::from_rgb(217, 119, 6) });
+            let clean_dev_btn = egui::Button::new(
+                RichText::new(dev_btn_text)
+                    .size(typography::BTN_NORMAL)
+                    .strong()
+                    .color(if pro_unlocked { Color32::WHITE } else { Color32::from_rgb(15, 23, 42) }),
+            )
+            .fill(if pro_unlocked { Color32::from_rgb(147, 51, 234) } else { Color32::from_rgb(245, 158, 11) });
             if ui.add(clean_dev_btn).clicked() {
                 if !pro_unlocked {
                     self.show_license_modal = true;
@@ -3548,41 +3560,114 @@ impl OptimizerApp {
 
     fn render_pin_pro_settings(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
+        let support = self.protection.battery_support.clone();
 
         // Row 1: Battery Care 80% & EC Controller Info
         render_settings_row!(
             ui,
             |ui| {
-                if render_switch_chip(
-                    ui,
-                    &p,
-                    "1. Khóa sạc 80% bảo vệ pin",
-                    "Chống chai pin và phồng cell lithium khi cắm sạc liên tục",
-                    &mut self.protection.battery_threshold_enabled,
-                    None,
-                ) {
-                    if self.protection.battery_threshold_enabled && !self.check_pro_gate("Khóa sạc pin 80%") {
-                        self.protection.battery_threshold_enabled = false;
-                        let _ = set_battery_threshold(false, 80);
-                    } else {
-                        let st = self.protection.battery_threshold_enabled;
-                        let _ = set_battery_threshold(st, 80);
-                        self.sync_config();
+                match support.kind {
+                    crate::battery_limiter::BatterySupportKind::Supported => {
+                        if render_switch_chip(
+                            ui,
+                            &p,
+                            "1. Khóa sạc 80% bảo vệ pin",
+                            "Chống chai pin và phồng cell lithium khi cắm sạc liên tục",
+                            &mut self.protection.battery_threshold_enabled,
+                            None,
+                        ) {
+                            if self.protection.battery_threshold_enabled && !self.check_pro_gate("Khóa sạc pin 80%") {
+                                self.protection.battery_threshold_enabled = false;
+                                let _ = set_battery_threshold(false, 80);
+                            } else {
+                                let st = self.protection.battery_threshold_enabled;
+                                match crate::protection::set_battery_threshold_result(st, 80) {
+                                    Ok(msg) => self.criteria_apply_msg = format!("✓ {}", msg),
+                                    Err(err) => self.criteria_apply_msg = format!("✗ {}", err),
+                                }
+                                self.sync_config();
+                            }
+                        }
+                    }
+                    crate::battery_limiter::BatterySupportKind::DriverMissing => {
+                        let mut dummy = false;
+                        let desc = format!("⚠ {}", support.status_message);
+                        if render_switch_chip(
+                            ui,
+                            &p,
+                            "1. Khóa sạc 80% bảo vệ pin",
+                            &desc,
+                            &mut dummy,
+                            None,
+                        ) {
+                            self.protection.battery_threshold_enabled = false;
+                            self.criteria_apply_msg = format!("⚠ {}", support.status_message);
+                        }
+                    }
+                    crate::battery_limiter::BatterySupportKind::NoBattery => {
+                        let mut dummy = false;
+                        let _ = render_switch_chip(
+                            ui,
+                            &p,
+                            "1. Khóa sạc 80% bảo vệ pin",
+                            "Thiết bị không có pin (Máy tính để bàn / Desktop PC)",
+                            &mut dummy,
+                            None,
+                        );
+                    }
+                    crate::battery_limiter::BatterySupportKind::Unsupported => {
+                        let mut dummy = false;
+                        let desc = format!("Bo mạch {} chưa hỗ trợ can thiệp mạch nạp BIOS/EC", support.oem_name);
+                        let _ = render_switch_chip(
+                            ui,
+                            &p,
+                            "1. Khóa sạc 80% bảo vệ pin",
+                            &desc,
+                            &mut dummy,
+                            None,
+                        );
                     }
                 }
             },
             |ui| {
-                let charge_limit_status = if self.protection.battery_threshold_enabled && is_pro_active(&self.license) {
-                    ("● ĐANG KHÓA 80%", p.success_green)
-                } else {
-                    ("○ 100% ĐẦY", p.text_secondary)
+                let (title, desc, status_badge) = match support.kind {
+                    crate::battery_limiter::BatterySupportKind::Supported => {
+                        let badge = if self.protection.battery_threshold_enabled && is_pro_active(&self.license) {
+                            ("● ĐANG KHÓA 80%", p.success_green)
+                        } else {
+                            ("○ 100% ĐẦY", p.text_secondary)
+                        };
+                        (
+                            format!("2. Quản lý mạch nạp ({})", support.backend_name),
+                            format!(
+                                "Mạch nạp {} sẵn sàng. Tự ngắt dòng khi pin đạt ngưỡng 80%.",
+                                support.oem_vendor.display_name()
+                            ),
+                            badge,
+                        )
+                    }
+                    crate::battery_limiter::BatterySupportKind::DriverMissing => (
+                        format!("2. Trình điều khiển {}", support.oem_vendor.display_name()),
+                        support.status_message.clone(),
+                        ("⚠ THIẾU DRIVER", p.warn_amber),
+                    ),
+                    crate::battery_limiter::BatterySupportKind::NoBattery => (
+                        "2. Nguồn điện Desktop / PC".to_string(),
+                        "Thiết bị sử dụng nguồn điện AC trực tiếp, không có cell pin.".to_string(),
+                        ("○ KHÔNG CÓ PIN", p.text_secondary),
+                    ),
+                    crate::battery_limiter::BatterySupportKind::Unsupported => (
+                        format!("2. Bo mạch {}", support.oem_name),
+                        "Chưa hỗ trợ giao tiếp mạch nạp BIOS/EC của nhà sản xuất này.".to_string(),
+                        ("✕ CHƯA HỖ TRỢ", p.warn_amber),
+                    ),
                 };
                 render_info_chip(
                     ui,
                     &p,
-                    "2. Quản lý mạch nạp BIOS/EC",
-                    "Hỗ trợ bo mạch ASUS Battery Health, Lenovo Vantage, Dell Command, HP Power Manager",
-                    Some((charge_limit_status.0, charge_limit_status.1)),
+                    &title,
+                    &desc,
+                    Some(status_badge),
                 );
             },
         );
