@@ -50,7 +50,8 @@ pub enum PartitionTab {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PartitionSubTab {
-    Basic,
+    Info,
+    Settings,
     Pro,
 }
 
@@ -374,14 +375,16 @@ fn render_action_chip(
                     .color(palette.text_primary),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button(
-                        RichText::new(action_label)
-                            .size(typography::BTN_SMALL)
-                            .strong(),
-                    )
-                    .clicked()
-                {
+                let btn = egui::Button::new(
+                    RichText::new(action_label)
+                        .size(typography::BTN_SMALL)
+                        .strong()
+                        .color(Color32::WHITE),
+                )
+                .fill(palette.primary_btn)
+                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+
+                if ui.add(btn).clicked() {
                     on_action();
                 }
             });
@@ -899,7 +902,7 @@ impl OptimizerApp {
             config,
             run_on_startup,
             selected_partition: None,
-            partition_sub_tab: PartitionSubTab::Basic,
+            partition_sub_tab: PartitionSubTab::Info,
             update_available: None,
             last_interaction: Instant::now(),
         }
@@ -1411,7 +1414,10 @@ impl OptimizerApp {
                     ui.label(RichText::new("🚀").size(14.0));
                     ui.label(RichText::new(format!("Có bản cập nhật mới: {}", ver)).size(12.0).strong().color(p.accent_blue));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("Tải ngay ↗").size(11.5).strong().color(Color32::WHITE)).clicked() {
+                        let dl_btn = egui::Button::new(RichText::new("Tải ngay ↗").size(11.5).strong().color(Color32::WHITE))
+                            .fill(p.accent_blue)
+                            .corner_radius(CornerRadius::same(6));
+                        if ui.add(dl_btn).clicked() {
                             ui.ctx().open_url(egui::OpenUrl::new_tab(url));
                         }
                     });
@@ -1448,7 +1454,7 @@ impl OptimizerApp {
                 };
 
                 let theme_btn = egui::Button::new(RichText::new(theme_text).size(13.5).strong().color(p.text_primary))
-                    .fill(p.card_bg)
+                    .fill(p.tab_inactive_bg)
                     .stroke(Stroke::new(1.0, p.card_border))
                     .corner_radius(CornerRadius::same(6));
 
@@ -1492,7 +1498,7 @@ impl OptimizerApp {
                         }
                         TrialStatus::NotStarted => {
                             let buy_btn = egui::Button::new(RichText::new("★ Lên PRO").size(13.5).strong().color(Color32::WHITE))
-                                .fill(p.warn_amber)
+                                .fill(Color32::from_rgb(217, 119, 6))
                                 .corner_radius(CornerRadius::same(6));
                             if ui.add(buy_btn).on_hover_text("Nâng cấp lên bản OmniTune Pro (hoặc dùng thử 7 ngày)").clicked() {
                                 self.show_license_modal = !self.show_license_modal;
@@ -1511,7 +1517,10 @@ impl OptimizerApp {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("★ BẢN QUYỀN OMNITUNE PRO").size(16.0).strong().color(p.warn_amber));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("✕ Đóng").size(13.5)).clicked() {
+                        let close_btn = egui::Button::new(RichText::new("✕ Đóng").size(13.0).strong().color(p.text_primary))
+                            .fill(p.tab_inactive_bg)
+                            .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+                        if ui.add(close_btn).clicked() {
                             self.show_license_modal = false;
                         }
                     });
@@ -1558,7 +1567,10 @@ impl OptimizerApp {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("HWID:").size(13.0).color(p.text_secondary));
                         ui.label(RichText::new(&hwid).size(12.5).strong().color(p.accent_blue));
-                        if ui.button(RichText::new("📋 Copy").size(11.5)).clicked() {
+                        let copy_btn = egui::Button::new(RichText::new("📋 Copy").size(11.5).strong().color(p.text_primary))
+                            .fill(p.tab_inactive_bg)
+                            .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+                        if ui.add(copy_btn).clicked() {
                             ui.ctx().copy_text(hwid.clone());
                             self.license_feedback_msg = "✓ Đã copy HWID vào Clipboard!".to_string();
                         }
@@ -1598,7 +1610,7 @@ impl OptimizerApp {
                         }
 
                         let buy_online_btn = egui::Button::new(RichText::new("💳 Mua Key ($9)").size(13.0).strong().color(Color32::WHITE))
-                            .fill(p.warn_amber)
+                            .fill(Color32::from_rgb(217, 119, 6))
                             .min_size(Vec2::new(90.0, 30.0))
                             .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
                         if ui.add(buy_online_btn).on_hover_text("Mở trang thanh toán nhận key ngay tức thì").clicked() {
@@ -1606,7 +1618,10 @@ impl OptimizerApp {
                         }
 
                         if self.license.is_valid {
-                            if ui.button(RichText::new("Hủy kích hoạt").size(12.0)).clicked() {
+                            let deact_btn = egui::Button::new(RichText::new("Hủy kích hoạt").size(12.0).strong().color(Color32::WHITE))
+                                .fill(p.danger_red)
+                                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+                            if ui.add(deact_btn).clicked() {
                                 deactivate_license();
                                 self.license = load_license();
                                 self.autonomous.is_pro = false;
@@ -1976,7 +1991,10 @@ impl OptimizerApp {
                         .color(p.accent_blue),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button(RichText::new("✕ Đóng").size(typography::BTN_NORMAL).strong()).clicked() {
+                    let close_btn = egui::Button::new(RichText::new("✕ Đóng").size(typography::BTN_NORMAL).strong().color(p.text_primary))
+                        .fill(p.tab_inactive_bg)
+                        .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+                    if ui.add(close_btn).clicked() {
                         self.selected_partition = None;
                     }
                 });
@@ -1984,33 +2002,56 @@ impl OptimizerApp {
             ui.separator();
             ui.add_space(4.0);
 
-            // Sub-tabs: Basic & Pro Selector
+            // Sub-tabs: Info, Settings & Pro Selector
             ui.horizontal(|ui| {
                 let is_pro = is_pro_active(&self.license);
-                let basic_active = self.partition_sub_tab == PartitionSubTab::Basic;
+                let info_active = self.partition_sub_tab == PartitionSubTab::Info;
+                let settings_active = self.partition_sub_tab == PartitionSubTab::Settings;
                 let pro_active = self.partition_sub_tab == PartitionSubTab::Pro;
 
-                let basic_btn = egui::Button::new(
-                    RichText::new(format!("📋 CƠ BẢN ({})", basic_count))
+                let info_btn = egui::Button::new(
+                    RichText::new("ℹ️ THÔNG TIN")
                         .size(typography::CHIP_TITLE)
                         .strong()
-                        .color(if basic_active { Color32::WHITE } else { p.text_secondary }),
+                        .color(if info_active { Color32::WHITE } else { p.text_primary }),
                 )
-                .fill(if basic_active { p.accent_blue } else { p.card_bg })
-                .stroke(Stroke::new(1.0, if basic_active { p.accent_blue } else { p.card_border }))
+                .fill(if info_active { p.accent_blue } else { p.card_bg })
+                .stroke(Stroke::new(1.0, if info_active { p.accent_blue } else { p.card_border }))
                 .min_size(Vec2::new(0.0, 34.0))
                 .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
 
-                if ui.add(basic_btn).clicked() {
-                    self.partition_sub_tab = PartitionSubTab::Basic;
+                if ui.add(info_btn).clicked() {
+                    self.partition_sub_tab = PartitionSubTab::Info;
+                }
+
+                let settings_btn = egui::Button::new(
+                    RichText::new(format!("⚙️ CÀI ĐẶT ({})", basic_count))
+                        .size(typography::CHIP_TITLE)
+                        .strong()
+                        .color(if settings_active { Color32::WHITE } else { p.text_primary }),
+                )
+                .fill(if settings_active { p.accent_blue } else { p.card_bg })
+                .stroke(Stroke::new(1.0, if settings_active { p.accent_blue } else { p.card_border }))
+                .min_size(Vec2::new(0.0, 34.0))
+                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+
+                if ui.add(settings_btn).clicked() {
+                    self.partition_sub_tab = PartitionSubTab::Settings;
                 }
 
                 let pro_badge = if is_pro { "ĐÃ MỞ KHÓA" } else { "VIP" };
+                let pro_color = if pro_active {
+                    Color32::WHITE
+                } else if p.is_dark {
+                    p.warn_amber
+                } else {
+                    Color32::from_rgb(180, 83, 9)
+                };
                 let pro_btn = egui::Button::new(
                     RichText::new(format!("⭐ GÓI PRO ({})", pro_badge))
                         .size(typography::CHIP_TITLE)
                         .strong()
-                        .color(if pro_active { Color32::WHITE } else { p.warn_amber }),
+                        .color(pro_color),
                 )
                 .fill(if pro_active { Color32::from_rgb(147, 51, 234) } else { p.card_bg })
                 .stroke(Stroke::new(1.0, if pro_active { Color32::from_rgb(147, 51, 234) } else { p.card_border }))
@@ -2025,7 +2066,16 @@ impl OptimizerApp {
             ui.add_space(8.0);
 
             match self.partition_sub_tab {
-                PartitionSubTab::Basic => {
+                PartitionSubTab::Info => {
+                    // 1 & 2. Thông tin cấu hình chi tiết & Đánh giá rủi ro
+                    match active {
+                        PartitionTab::Cpu => self.render_cpu_info(ui),
+                        PartitionTab::Ram => self.render_ram_info(ui),
+                        PartitionTab::Pin => self.render_pin_info(ui),
+                        PartitionTab::Drive => self.render_drive_info(ui),
+                    }
+                }
+                PartitionSubTab::Settings => {
                     // Nút Dọn dẹp nhanh trực tiếp nổi bật
                     let quick_btn = egui::Button::new(
                         RichText::new(clean_btn_txt)
@@ -2053,21 +2103,21 @@ impl OptimizerApp {
 
                     ui.add_space(8.0);
 
-                    // 1. Phân tích chi tiết: Thông tin phần cứng + Đánh giá rủi ro + Top 5 tác nhân
+                    // Danh sách tác nhân & tiến trình nổi bật
                     match active {
-                        PartitionTab::Cpu => self.render_cpu_detail(ui),
-                        PartitionTab::Ram => self.render_ram_detail(ui),
-                        PartitionTab::Pin => self.render_pin_detail(ui),
-                        PartitionTab::Drive => self.render_drive_detail(ui),
+                        PartitionTab::Cpu => self.render_cpu_tasks(ui),
+                        PartitionTab::Ram => self.render_ram_tasks(ui),
+                        PartitionTab::Pin => self.render_pin_tasks(ui),
+                        PartitionTab::Drive => self.render_drive_tasks(ui),
                     }
 
                     ui.add_space(10.0);
                     ui.separator();
                     ui.add_space(6.0);
 
-                    // 2. Cài đặt cơ bản miễn phí
+                    // Cài đặt
                     ui.label(
-                        RichText::new(format!("{} CÀI ĐẶT CƠ BẢN MIỄN PHÍ:", basic_count))
+                        RichText::new(format!("{} THIẾT LẬP CÀI ĐẶT:", basic_count))
                             .size(typography::CHIP_TITLE)
                             .strong()
                             .color(p.text_primary),
@@ -2086,7 +2136,7 @@ impl OptimizerApp {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         let apply_btn = egui::Button::new(
-                            RichText::new("ÁP DỤNG CÀI ĐẶT CƠ BẢN")
+                            RichText::new("ÁP DỤNG CÀI ĐẶT")
                                 .size(typography::CHIP_TITLE)
                                 .strong()
                                 .color(Color32::WHITE),
@@ -2245,8 +2295,8 @@ impl OptimizerApp {
             });
     }
 
-    // --- CHI TIẾT PHÂN VÙNG CPU ---
-    fn render_cpu_detail(&mut self, ui: &mut egui::Ui) {
+    // --- THÔNG TIN PHÂN VÙNG CPU (MỤC 1 & 2) ---
+    fn render_cpu_info(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
         // 1. Thông tin cấu hình chi tiết
@@ -2311,11 +2361,14 @@ impl OptimizerApp {
             )
         };
         render_risk_card(ui, &p, risk_lvl, risk_title, risk_diag, risk_advice);
+    }
 
-        ui.add_space(8.0);
+    // --- TIẾN TRÌNH & TÁC NHÂN CPU ---
+    fn render_cpu_tasks(&mut self, ui: &mut egui::Ui) {
+        let p = self.palette;
 
-        // 3. Top 5 ứng dụng ngốn CPU
-        ui.label(RichText::new("3. TOP 5 ỨNG DỤNG CHIẾM NHIỀU CPU NHẤT").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
+        // Top 5 ứng dụng ngốn CPU
+        ui.label(RichText::new("TOP 5 ỨNG DỤNG CHIẾM NHIỀU CPU NHẤT").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
         ui.add_space(2.0);
 
         let mut cpu_procs = self.top_processes.clone();
@@ -2337,7 +2390,10 @@ impl OptimizerApp {
                     let cpu_col = if proc.cpu_usage > 20.0 { p.danger_red } else if proc.cpu_usage > 5.0 { p.warn_amber } else { p.accent_blue };
                     ui.label(RichText::new(format!("{:.1}%", proc.cpu_usage)).size(typography::DETAIL_TEXT).strong().color(cpu_col));
                     ui.label(RichText::new(format_bytes(proc.memory_bytes)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                    if ui.add(egui::Button::new(RichText::new("Tắt").size(typography::BTN_SMALL).color(p.danger_red))).clicked() {
+                    let term_btn = egui::Button::new(RichText::new("Tắt").size(typography::BTN_SMALL).strong().color(Color32::WHITE))
+                        .fill(p.danger_red)
+                        .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+                    if ui.add(term_btn).clicked() {
                         let _ = terminate_process(proc.pid);
                         self.process_action_msg = format!("✓ Đã kết thúc '{}'", proc.name);
                     }
@@ -2348,11 +2404,14 @@ impl OptimizerApp {
 
         ui.add_space(8.0);
 
-        // 4. Ứng dụng khởi động cùng Windows
+        // Ứng dụng khởi động cùng Windows
         ui.horizontal(|ui| {
-            ui.label(RichText::new("4. ỨNG DỤNG KHỞI ĐỘNG CÙNG WINDOWS").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
+            ui.label(RichText::new("ỨNG DỤNG KHỞI ĐỘNG CÙNG WINDOWS").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(RichText::new("Làm mới").size(typography::BTN_SMALL)).clicked() {
+                let refresh_btn = egui::Button::new(RichText::new("🔄 Làm mới").size(typography::BTN_SMALL).strong().color(p.text_primary))
+                    .fill(p.tab_inactive_bg)
+                    .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+                if ui.add(refresh_btn).clicked() {
                     self.startup_apps = get_startup_apps();
                 }
             });
@@ -2394,8 +2453,8 @@ impl OptimizerApp {
         }
     }
 
-    // --- CHI TIẾT PHÂN VÙNG RAM ---
-    fn render_ram_detail(&mut self, ui: &mut egui::Ui) {
+    // --- THÔNG TIN PHÂN VÙNG RAM (MỤC 1 & 2) ---
+    fn render_ram_info(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
         // 1. Thông tin cấu hình chi tiết
@@ -2463,11 +2522,14 @@ impl OptimizerApp {
             )
         };
         render_risk_card(ui, &p, risk_lvl, risk_title, risk_diag, risk_advice);
+    }
 
-        ui.add_space(8.0);
+    // --- TÁC NHÂN NGỐN RAM ---
+    fn render_ram_tasks(&mut self, ui: &mut egui::Ui) {
+        let p = self.palette;
 
-        // 3. Top 5 ứng dụng ngốn RAM
-        ui.label(RichText::new("3. TOP 5 ỨNG DỤNG CHIẾM NHIỀU RAM NHẤT").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
+        // Top 5 ứng dụng ngốn RAM
+        ui.label(RichText::new("TOP 5 ỨNG DỤNG CHIẾM NHIỀU RAM NHẤT").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
         ui.add_space(2.0);
 
         let mut ram_procs = self.top_processes.clone();
@@ -2487,11 +2549,17 @@ impl OptimizerApp {
                     ui.label(RichText::new(format!("{} (PID: {})", proc.name, proc.pid)).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
                     ui.label(RichText::new(format_bytes(proc.memory_bytes)).size(typography::DETAIL_TEXT).strong().color(p.accent_blue));
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Dọn").size(typography::BTN_SMALL)).clicked() {
+                        let clean_btn = egui::Button::new(RichText::new("Dọn").size(typography::BTN_SMALL).strong().color(Color32::WHITE))
+                            .fill(p.primary_btn)
+                            .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+                        if ui.add(clean_btn).clicked() {
                             let f = trim_single_process(proc.pid);
                             self.criteria_apply_msg = format!("✓ Thu hồi {} từ '{}'", format_bytes(f), proc.name);
                         }
-                        if ui.add(egui::Button::new(RichText::new("Tắt").size(typography::BTN_SMALL).color(p.danger_red))).clicked() {
+                        let term_btn = egui::Button::new(RichText::new("Tắt").size(typography::BTN_SMALL).strong().color(Color32::WHITE))
+                            .fill(p.danger_red)
+                            .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+                        if ui.add(term_btn).clicked() {
                             let _ = terminate_process(proc.pid);
                             self.criteria_apply_msg = format!("✓ Đã kết thúc '{}'", proc.name);
                         }
@@ -2502,8 +2570,8 @@ impl OptimizerApp {
         }
     }
 
-    // --- CHI TIẾT PHÂN VÙNG PIN / NGUỒN ---
-    fn render_pin_detail(&mut self, ui: &mut egui::Ui) {
+    // --- THÔNG TIN PHÂN VÙNG PIN / NGUỒN (MỤC 1 & 2) ---
+    fn render_pin_info(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
         // 1. Thông tin cấu hình chi tiết
@@ -2608,11 +2676,14 @@ impl OptimizerApp {
             };
             render_risk_card(ui, &p, risk_lvl, risk_title, risk_diag, risk_advice);
         }
+    }
 
-        ui.add_space(8.0);
+    // --- TÁC NHÂN TIÊU THỤ PIN ---
+    fn render_pin_tasks(&mut self, ui: &mut egui::Ui) {
+        let p = self.palette;
 
-        // 3. Top 5 tác nhân gây hao pin
-        ui.label(RichText::new("3. TOP 5 TÁC NHÂN TIÊU THỤ PIN & ĐÁNH THỨC CPU").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
+        // Top 5 tác nhân gây hao pin
+        ui.label(RichText::new("TOP 5 TÁC NHÂN TIÊU THỤ PIN & ĐÁNH THỨC CPU").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
         ui.add_space(2.0);
 
         let top_cpu_app = self.top_processes.first().map(|p| format!("{} ({:.1}% CPU)", p.name, p.cpu_usage)).unwrap_or_else(|| "Chưa phát hiện".to_string());
@@ -2626,7 +2697,10 @@ impl OptimizerApp {
             // 1. App wakeups
             ui.label(RichText::new("1. App đánh thức CPU").size(typography::DETAIL_TEXT).strong().color(p.text_primary));
             ui.label(RichText::new(top_cpu_app).size(typography::DETAIL_TEXT).color(p.accent_blue));
-            if ui.button(RichText::new("Ép EcoQoS").size(typography::BTN_SMALL)).clicked() {
+            let eco_btn = egui::Button::new(RichText::new("Ép EcoQoS").size(typography::BTN_SMALL).strong().color(Color32::WHITE))
+                .fill(p.primary_btn)
+                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+            if ui.add(eco_btn).clicked() {
                 self.clean_cpu_partition();
             }
             ui.end_row();
@@ -2634,7 +2708,10 @@ impl OptimizerApp {
             // 2. LED backlight
             ui.label(RichText::new("2. Màn hình LED").size(typography::DETAIL_TEXT).strong().color(p.text_primary));
             ui.label(RichText::new(format!("Độ sáng {}% (~35% điện)", self.brightness_level)).size(typography::DETAIL_TEXT).color(p.warn_amber));
-            if ui.button(RichText::new("Hạ 45% Pin").size(typography::BTN_SMALL)).clicked() {
+            let b_btn = egui::Button::new(RichText::new("Hạ 45% Pin").size(typography::BTN_SMALL).strong().color(Color32::WHITE))
+                .fill(p.primary_btn)
+                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+            if ui.add(b_btn).clicked() {
                 self.brightness_level = 45;
                 let _ = set_brightness(45);
                 self.sync_config();
@@ -2644,7 +2721,11 @@ impl OptimizerApp {
             // 3. Cooling fan
             ui.label(RichText::new("3. Quạt tản nhiệt").size(typography::DETAIL_TEXT).strong().color(p.text_primary));
             ui.label(RichText::new(if self.cooling_active { "Active (Quay mạnh)" } else { "Passive (0dB)" }).size(typography::DETAIL_TEXT).color(p.text_secondary));
-            if ui.button(RichText::new(if self.cooling_active { "Đổi Passive" } else { "Đổi Active" }).size(typography::BTN_SMALL)).clicked() {
+            let fan_txt = if self.cooling_active { "Đổi Passive" } else { "Đổi Active" };
+            let fan_btn = egui::Button::new(RichText::new(fan_txt).size(typography::BTN_SMALL).strong().color(Color32::WHITE))
+                .fill(p.primary_btn)
+                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+            if ui.add(fan_btn).clicked() {
                 self.cooling_active = !self.cooling_active;
                 let _ = set_cooling_policy(self.cooling_active);
                 self.sync_config();
@@ -2654,7 +2735,10 @@ impl OptimizerApp {
             // 4. DC Limit
             ui.label(RichText::new("4. Xung CPU khi rút sạc").size(typography::DETAIL_TEXT).strong().color(p.text_primary));
             ui.label(RichText::new(format!("Giới hạn {}% Turbo", self.cpu_limit_dc)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-            if ui.button(RichText::new("Hạ 80% DC").size(typography::BTN_SMALL)).clicked() {
+            let dc_btn = egui::Button::new(RichText::new("Hạ 80% DC").size(typography::BTN_SMALL).strong().color(Color32::WHITE))
+                .fill(p.primary_btn)
+                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+            if ui.add(dc_btn).clicked() {
                 self.cpu_limit_dc = 80;
                 let _ = set_cpu_max_state_dc(80);
                 self.sync_config();
@@ -2664,7 +2748,11 @@ impl OptimizerApp {
             // 5. Anti-sleep
             ui.label(RichText::new("5. Chế độ chống Sleep").size(typography::DETAIL_TEXT).strong().color(p.text_primary));
             ui.label(RichText::new(if self.keep_awake_mode == 2 { "Đang giữ máy thức" } else { "Theo chuẩn OS" }).size(typography::DETAIL_TEXT).color(p.text_secondary));
-            if ui.button(RichText::new(if self.keep_awake_mode == 2 { "Tắt thức" } else { "Bật thức" }).size(typography::BTN_SMALL)).clicked() {
+            let awake_txt = if self.keep_awake_mode == 2 { "Tắt thức" } else { "Bật thức" };
+            let awake_btn = egui::Button::new(RichText::new(awake_txt).size(typography::BTN_SMALL).strong().color(Color32::WHITE))
+                .fill(p.primary_btn)
+                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+            if ui.add(awake_btn).clicked() {
                 self.keep_awake_mode = if self.keep_awake_mode == 2 { 0 } else { 2 };
                 set_keep_awake(self.keep_awake_mode);
                 self.sync_config();
@@ -2673,8 +2761,8 @@ impl OptimizerApp {
         });
     }
 
-    // --- CHI TIẾT PHÂN VÙNG Ổ ĐĨA / DRIVE ---
-    fn render_drive_detail(&mut self, ui: &mut egui::Ui) {
+    // --- THÔNG TIN PHÂN VÙNG Ổ ĐĨA (MỤC 1 & 2) ---
+    fn render_drive_info(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
 
         // 1. Thông tin cấu hình chi tiết
@@ -2744,14 +2832,20 @@ impl OptimizerApp {
             )
         };
         render_risk_card(ui, &p, risk_lvl, risk_title, risk_diag, risk_advice);
+    }
 
-        ui.add_space(8.0);
+    // --- NGUỒN RÁC & CÔNG CỤ DỌN DẸP ---
+    fn render_drive_tasks(&mut self, ui: &mut egui::Ui) {
+        let p = self.palette;
 
-        // 3. Top 5 nguồn rác chiếm dung lượng lớn nhất
+        // Top nguồn rác & công cụ dọn dẹp
         ui.horizontal(|ui| {
-            ui.label(RichText::new("3. TOP NGUỒN RÁC & CÔNG CỤ DỌN DẸP ĐA TẦNG").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
+            ui.label(RichText::new("TOP NGUỒN RÁC & CÔNG CỤ DỌN DẸP ĐA TẦNG").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(RichText::new("Quét lại").size(typography::BTN_SMALL)).clicked() {
+                let scan_btn = egui::Button::new(RichText::new("🔄 Quét lại").size(typography::BTN_SMALL).strong().color(p.text_primary))
+                    .fill(p.tab_inactive_bg)
+                    .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+                if ui.add(scan_btn).clicked() {
                     let targets = get_default_targets();
                     for (i, target) in targets.iter().enumerate() {
                         let (size, count) = scan_target(target);
@@ -2784,8 +2878,8 @@ impl OptimizerApp {
 
             let pro_unlocked = is_pro_active(&self.license);
             let dev_btn_text = "Dọn Dev Cache";
-            let clean_dev_btn = egui::Button::new(RichText::new(dev_btn_text).size(typography::BTN_NORMAL).color(Color32::WHITE))
-                .fill(if pro_unlocked { Color32::from_rgb(147, 51, 234) } else { p.warn_amber });
+            let clean_dev_btn = egui::Button::new(RichText::new(dev_btn_text).size(typography::BTN_NORMAL).strong().color(Color32::WHITE))
+                .fill(if pro_unlocked { Color32::from_rgb(147, 51, 234) } else { Color32::from_rgb(217, 119, 6) });
             if ui.add(clean_dev_btn).clicked() {
                 if !pro_unlocked {
                     self.show_license_modal = true;
@@ -2824,7 +2918,10 @@ impl OptimizerApp {
                     let sz_col = if item.size_bytes > 500 * 1024 * 1024 { p.danger_red } else if item.size_bytes > 100 * 1024 * 1024 { p.warn_amber } else { p.accent_blue };
                     ui.label(RichText::new(format_bytes(item.size_bytes)).size(typography::DETAIL_TEXT).strong().color(sz_col));
                     ui.label(RichText::new(format!("{} tệp", item.file_count)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-                    if ui.button(RichText::new("Dọn").size(typography::BTN_SMALL)).clicked() {
+                    let clean_btn = egui::Button::new(RichText::new("Dọn").size(typography::BTN_SMALL).strong().color(Color32::WHITE))
+                        .fill(p.primary_btn)
+                        .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+                    if ui.add(clean_btn).clicked() {
                         let targets = get_default_targets();
                         if let Some(t) = targets.into_iter().find(|t| t.name == item.name) {
                             if t.tier == CleanTier::Developer && !self.check_pro_gate("Dọn dẹp Dev Cache") {
@@ -3274,14 +3371,16 @@ impl OptimizerApp {
                             .wrap(),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui
-                                .button(
-                                    RichText::new("Thu hồi ngay")
-                                        .size(typography::BTN_SMALL)
-                                        .strong(),
-                                )
-                                .clicked()
-                            {
+                            let trim_btn = egui::Button::new(
+                                RichText::new("Thu hồi ngay")
+                                    .size(typography::BTN_SMALL)
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(p.primary_btn)
+                            .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+
+                            if ui.add(trim_btn).clicked() {
                                 let (freed, count) = trim_working_sets(&mut self.sys);
                                 self.criteria_apply_msg =
                                     format!("✓ Thu hồi {} từ {} tiến trình.", format_bytes(freed), count);
@@ -3632,11 +3731,11 @@ impl OptimizerApp {
                 render_action_chip(
                     ui,
                     &p,
-                    "1. Tạo điểm khôi phục (Restore Point)",
+                    "1. Tạo điểm khôi phục",
                     "Sao lưu trạng thái hệ thống trước khi tinh chỉnh sâu",
-                    "Tạo điểm khôi phục",
+                    "Tạo",
                     || {
-                        if !self.check_pro_gate("Tạo điểm khôi phục (Restore Point)") {
+                        if !self.check_pro_gate("Tạo điểm khôi phục") {
                             return;
                         }
                         match create_restore_point() {
