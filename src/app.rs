@@ -27,7 +27,7 @@ use crate::startup::{get_startup_apps, is_telemetry_active, toggle_startup_item}
 use crate::theme::{
     apply_theme, configure_fonts, spacing, typography, ThemeMode, ThemePalette,
 };
-use crate::types::{BatteryDetails, CleanTier, JunkCategory, ProcessMemInfo, StartupAppItem, Tab};
+use crate::types::{BatteryDetails, CleanTier, JunkCategory, ProcessMemInfo, StartupAppItem};
 use eframe::egui::{self, Color32, CornerRadius, RichText, Stroke, Vec2};
 use std::os::windows::process::CommandExt;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -72,8 +72,6 @@ pub struct InitialScanResult {
 }
 
 pub struct OptimizerApp {
-    #[allow(dead_code)]
-    current_tab: Tab,
     autonomous: AutonomousEngine,
     foreground_info: Option<(u32, String)>,
 
@@ -843,7 +841,6 @@ impl OptimizerApp {
         );
 
         Self {
-            current_tab: Tab::Widget,
             autonomous,
             foreground_info: None,
             theme_mode,

@@ -1,10 +1,3 @@
-#[derive(Debug, Clone, PartialEq)]
-pub enum Tab {
-    Widget,
-    #[allow(dead_code)]
-    AdvancedSettings,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CleanTier {
     Safe,
