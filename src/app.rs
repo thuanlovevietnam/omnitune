@@ -1073,6 +1073,18 @@ impl OptimizerApp {
             tips.push("Đang cắm sạc: Bật ngưỡng 80% trong phần cài đặt để chống phù pin.".to_string());
         }
 
+        if self.protection.physical_disk_health.eq_ignore_ascii_case("Unhealthy")
+            || self.protection.physical_disk_status.to_ascii_lowercase().contains("predictive failure")
+        {
+            score -= 30;
+            tips.push(format!("Cảnh báo nguy cấp: Ổ đĩa báo lỗi phần cứng (SMART: {}), sao lưu dữ liệu ngay!", self.protection.physical_disk_status));
+        } else if self.protection.physical_disk_health.eq_ignore_ascii_case("Warning")
+            || self.protection.physical_disk_status.to_ascii_lowercase().contains("degraded")
+        {
+            score -= 15;
+            tips.push(format!("Ổ đĩa có cảnh báo hao mòn (SMART: {}), cần theo dõi định kỳ.", self.protection.physical_disk_status));
+        }
+
         if tips.is_empty() {
             tips.push("Hệ thống và phần cứng đang vận hành ở trạng thái tối ưu lý tưởng.".to_string());
         }
@@ -1856,9 +1868,11 @@ impl OptimizerApp {
 
         if cpu_clicked {
             self.selected_partition = if is_cpu { None } else { Some(PartitionTab::Cpu) };
+            self.process_action_msg.clear();
         }
         if ram_clicked {
             self.selected_partition = if is_ram { None } else { Some(PartitionTab::Ram) };
+            self.process_action_msg.clear();
         }
 
         ui.add_space(10.0);
@@ -1937,9 +1951,11 @@ impl OptimizerApp {
 
         if pin_clicked {
             self.selected_partition = if is_pin { None } else { Some(PartitionTab::Pin) };
+            self.process_action_msg.clear();
         }
         if drv_clicked {
             self.selected_partition = if is_drv { None } else { Some(PartitionTab::Drive) };
+            self.process_action_msg.clear();
         }
 
         // --- EXPANDABLE UNIFIED CARD FOR SELECTED PARTITION ---
@@ -2030,6 +2046,7 @@ impl OptimizerApp {
 
                 if ui.add(info_btn).clicked() {
                     self.partition_sub_tab = PartitionSubTab::Info;
+                    self.process_action_msg.clear();
                 }
 
                 let settings_btn = egui::Button::new(
@@ -2045,6 +2062,7 @@ impl OptimizerApp {
 
                 if ui.add(settings_btn).clicked() {
                     self.partition_sub_tab = PartitionSubTab::Settings;
+                    self.process_action_msg.clear();
                 }
 
                 let pro_badge = if is_pro { "ĐÃ MỞ KHÓA" } else { "VIP" };
@@ -2068,6 +2086,7 @@ impl OptimizerApp {
 
                 if ui.add(pro_btn).clicked() {
                     self.partition_sub_tab = PartitionSubTab::Pro;
+                    self.process_action_msg.clear();
                 }
             });
 
@@ -2371,6 +2390,21 @@ impl OptimizerApp {
         render_risk_card(ui, &p, risk_lvl, risk_title, risk_diag, risk_advice);
     }
 
+    fn render_process_action_msg(&self, ui: &mut egui::Ui) {
+        if !self.process_action_msg.is_empty() {
+            let p = self.palette;
+            let col = if self.process_action_msg.starts_with('✓') {
+                p.success_green
+            } else if self.process_action_msg.starts_with('✗') {
+                p.danger_red
+            } else {
+                p.warn_amber
+            };
+            ui.label(RichText::new(&self.process_action_msg).size(typography::DETAIL_TEXT).color(col).strong());
+            ui.add_space(2.0);
+        }
+    }
+
     // --- TIẾN TRÌNH & TÁC NHÂN CPU ---
     fn render_cpu_tasks(&mut self, ui: &mut egui::Ui) {
         let p = self.palette;
@@ -2378,6 +2412,8 @@ impl OptimizerApp {
         // Top 5 ứng dụng ngốn CPU
         ui.label(RichText::new("TOP 5 ỨNG DỤNG CHIẾM NHIỀU CPU NHẤT").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
         ui.add_space(2.0);
+
+        self.render_process_action_msg(ui);
 
         let mut cpu_procs = self.top_processes.clone();
         cpu_procs.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal));
@@ -2402,8 +2438,12 @@ impl OptimizerApp {
                         .fill(p.danger_red)
                         .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
                     if ui.add(term_btn).clicked() {
-                        let _ = terminate_process(proc.pid);
-                        self.process_action_msg = format!("✓ Đã kết thúc '{}'", proc.name);
+                        if terminate_process(proc.pid) {
+                            self.process_action_msg = format!("✓ Đã kết thúc '{}' (PID: {})", proc.name, proc.pid);
+                            self.top_processes.retain(|p| p.pid != proc.pid);
+                        } else {
+                            self.process_action_msg = format!("✗ Không thể tắt '{}' (cần quyền Admin hoặc tiến trình hệ thống)", proc.name);
+                        }
                     }
                     ui.end_row();
                 }
@@ -2540,6 +2580,8 @@ impl OptimizerApp {
         ui.label(RichText::new("TOP 5 ỨNG DỤNG CHIẾM NHIỀU RAM NHẤT").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
         ui.add_space(2.0);
 
+        self.render_process_action_msg(ui);
+
         let mut ram_procs = self.top_processes.clone();
         ram_procs.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
         let top_5: Vec<_> = ram_procs.into_iter().take(5).collect();
@@ -2562,14 +2604,23 @@ impl OptimizerApp {
                             .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
                         if ui.add(clean_btn).clicked() {
                             let f = trim_single_process(proc.pid);
-                            self.criteria_apply_msg = format!("✓ Thu hồi {} từ '{}'", format_bytes(f), proc.name);
+                            if f > 0 {
+                                self.process_action_msg = format!("✓ Đã thu hồi {} từ '{}'", format_bytes(f), proc.name);
+                                self.mem_stats = get_memory_stats();
+                            } else {
+                                self.process_action_msg = format!("ℹ '{}' không giải phóng thêm được RAM (hoặc từ chối truy cập)", proc.name);
+                            }
                         }
                         let term_btn = egui::Button::new(RichText::new("Tắt").size(typography::BTN_SMALL).strong().color(Color32::WHITE))
                             .fill(p.danger_red)
                             .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
                         if ui.add(term_btn).clicked() {
-                            let _ = terminate_process(proc.pid);
-                            self.criteria_apply_msg = format!("✓ Đã kết thúc '{}'", proc.name);
+                            if terminate_process(proc.pid) {
+                                self.process_action_msg = format!("✓ Đã kết thúc '{}' (PID: {})", proc.name, proc.pid);
+                                self.top_processes.retain(|p| p.pid != proc.pid);
+                            } else {
+                                self.process_action_msg = format!("✗ Không thể tắt '{}' (cần quyền Admin hoặc tiến trình hệ thống)", proc.name);
+                            }
                         }
                     });
                     ui.end_row();
@@ -2807,6 +2858,21 @@ impl OptimizerApp {
                         ui.label(RichText::new("Thiết lập tối ưu:").size(typography::DETAIL_TEXT).color(p.text_secondary));
                         ui.label(RichText::new(format!("SSD TRIM: {} • Dịch vụ SysMain: {}", if self.trim_enabled { "Đã kích hoạt" } else { "Tắt" }, if self.sysmain_disabled { "Đã tắt (Tốt cho SSD)" } else { "Bật" })).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
                         ui.end_row();
+
+                        ui.label(RichText::new("Sức khỏe ổ đĩa (SMART):").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        let (health_txt, health_color) = if self.protection.physical_disk_health.is_empty() {
+                            ("Đang kiểm tra SMART...".to_string(), p.text_secondary)
+                        } else if self.protection.physical_disk_health.eq_ignore_ascii_case("Healthy") {
+                            (format!("● Khỏe mạnh (SMART: {})", self.protection.physical_disk_status), p.success_green)
+                        } else if self.protection.physical_disk_health.eq_ignore_ascii_case("Warning") {
+                            (format!("▲ Cảnh báo hao mòn (SMART: {})", self.protection.physical_disk_status), p.warn_amber)
+                        } else if self.protection.physical_disk_health.eq_ignore_ascii_case("Unhealthy") {
+                            (format!("✖ Lỗi phần cứng (SMART: {})", self.protection.physical_disk_status), p.danger_red)
+                        } else {
+                            (format!("● {} (SMART: {})", self.protection.physical_disk_health, self.protection.physical_disk_status), p.text_primary)
+                        };
+                        ui.label(RichText::new(health_txt).size(typography::DETAIL_TEXT).strong().color(health_color));
+                        ui.end_row();
                     });
             });
 
@@ -2816,8 +2882,27 @@ impl OptimizerApp {
         ui.label(RichText::new("2. ĐÁNH GIÁ RỦI RO TRÀN Ổ ĐĨA & TUỔI THỌ SSD").size(typography::CHIP_TITLE).strong().color(p.accent_blue));
         ui.add_space(2.0);
 
+        let is_disk_unhealthy = self.protection.physical_disk_health.eq_ignore_ascii_case("Unhealthy")
+            || self.protection.physical_disk_status.to_ascii_lowercase().contains("predictive failure");
+        let is_disk_warning = self.protection.physical_disk_health.eq_ignore_ascii_case("Warning")
+            || self.protection.physical_disk_status.to_ascii_lowercase().contains("degraded");
+
         let total_junk: u64 = self.clean_categories.iter().map(|c| c.size_bytes).sum();
-        let (risk_lvl, risk_title, risk_diag, risk_advice) = if free_pct < 12.0 {
+        let (risk_lvl, risk_title, risk_diag, risk_advice) = if is_disk_unhealthy {
+            (
+                RiskLevel::Danger,
+                "CẢNH BÁO: Ổ ĐĨA BÁO LỖI PHẦN CỨNG (SMART UNHEALTHY)",
+                "Bộ điều khiển ổ đĩa báo cáo tình trạng phần cứng không an toàn hoặc lỗi SMART. Nguy cơ mất dữ liệu đột ngột rất cao.",
+                "Sao lưu toàn bộ dữ liệu quan trọng ngay lập tức và tiến hành kiểm tra / thay thế ổ đĩa.",
+            )
+        } else if is_disk_warning {
+            (
+                RiskLevel::Warning,
+                "CẢNH BÁO: SỨC KHỔE Ổ ĐĨA ĐANG XUỐNG CẤP (SMART WARNING)",
+                "Chỉ số SMART ghi nhận cảnh báo hao mòn hoặc suy giảm hiệu năng trên ổ đĩa vật lý.",
+                "Theo dõi định kỳ, hạn chế ghi dữ liệu nặng liên tục và sao lưu dữ liệu quan trọng dự phòng.",
+            )
+        } else if free_pct < 12.0 {
             (
                 RiskLevel::Danger,
                 "DUNG LƯỢNG Ổ ĐĨA HỆ THỐNG SẮP CẠN",
