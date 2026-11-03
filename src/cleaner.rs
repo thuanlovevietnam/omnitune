@@ -19,6 +19,10 @@ pub struct CleanTarget {
 pub fn get_default_targets() -> Vec<CleanTarget> {
     let local_app_data = env::var("LOCALAPPDATA").ok().map(PathBuf::from);
     let user_profile = env::var("USERPROFILE").ok().map(PathBuf::from);
+    let system_root = env::var("SystemRoot")
+        .or_else(|_| env::var("windir"))
+        .unwrap_or_else(|_| r"C:\Windows".to_string());
+    let sys_path = PathBuf::from(&system_root);
 
     let edge_cache = local_app_data
         .as_ref()
@@ -47,8 +51,8 @@ pub fn get_default_targets() -> Vec<CleanTarget> {
         },
         CleanTarget {
             name: "System Temp",
-            path_desc: "C:\\Windows\\Temp (File tạm hệ điều hành)",
-            path: Some(PathBuf::from(r"C:\Windows\Temp")),
+            path_desc: "%SystemRoot%\\Temp (File tạm hệ điều hành)",
+            path: Some(sys_path.join("Temp")),
             is_recycle_bin: false,
             tier: CleanTier::Safe,
         },
@@ -112,15 +116,15 @@ pub fn get_default_targets() -> Vec<CleanTarget> {
         // --- TIER 3: BẢO TRÌ HỆ THỐNG SÂU ---
         CleanTarget {
             name: "Windows Update Cache",
-            path_desc: "C:\\Windows\\SoftwareDistribution\\Download (Bản vá đã cài)",
-            path: Some(PathBuf::from(r"C:\Windows\SoftwareDistribution\Download")),
+            path_desc: "%SystemRoot%\\SoftwareDistribution\\Download (Bản vá đã cài)",
+            path: Some(sys_path.join(r"SoftwareDistribution\Download")),
             is_recycle_bin: false,
             tier: CleanTier::SystemMaintenance,
         },
         CleanTarget {
             name: "Windows Prefetch",
-            path_desc: "C:\\Windows\\Prefetch (Cache khởi động ứng dụng cũ)",
-            path: Some(PathBuf::from(r"C:\Windows\Prefetch")),
+            path_desc: "%SystemRoot%\\Prefetch (Cache khởi động ứng dụng cũ)",
+            path: Some(sys_path.join("Prefetch")),
             is_recycle_bin: false,
             tier: CleanTier::SystemMaintenance,
         },
@@ -195,7 +199,8 @@ pub fn clean_target(target: &CleanTarget) -> (u64, usize) {
     let mut deleted_files = 0usize;
 
     let entries: Vec<_> = WalkDir::new(path)
-        .max_depth(4)
+        .max_depth(5)
+        .follow_links(false)
         .into_iter()
         .filter_map(|e| e.ok())
         .collect();
@@ -229,5 +234,66 @@ pub fn format_bytes(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clean_tiers_coverage() {
+        let targets = get_default_targets();
+        assert!(targets.iter().any(|t| t.tier == CleanTier::Safe));
+        assert!(targets.iter().any(|t| t.tier == CleanTier::Developer));
+        assert!(targets.iter().any(|t| t.tier == CleanTier::SystemMaintenance));
+
+        let sys_maint_targets: Vec<_> = targets
+            .into_iter()
+            .filter(|t| t.tier == CleanTier::SystemMaintenance)
+            .collect();
+        assert_eq!(sys_maint_targets.len(), 2);
+        assert!(sys_maint_targets.iter().any(|t| t.name == "Windows Update Cache"));
+        assert!(sys_maint_targets.iter().any(|t| t.name == "Windows Prefetch"));
+
+        for target in sys_maint_targets {
+            assert!(target.path.is_some());
+            let path = target.path.unwrap();
+            assert!(path.to_string_lossy().contains("SoftwareDistribution") || path.to_string_lossy().contains("Prefetch"));
+        }
+    }
+
+    #[test]
+    fn test_format_bytes() {
+        assert_eq!(format_bytes(500), "500 B");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1024 * 1024 * 5), "5.00 MB");
+        assert_eq!(format_bytes(1024 * 1024 * 1024 * 2), "2.00 GB");
+    }
+
+    #[test]
+    fn test_scan_and_clean_temp_target() {
+        let temp_dir = env::temp_dir().join("omnitune_test_clean_dummy");
+        let _ = fs::create_dir_all(&temp_dir);
+        let dummy_file = temp_dir.join("test.tmp");
+        let _ = fs::write(&dummy_file, b"hello test cleaner");
+
+        let target = CleanTarget {
+            name: "Test Dummy",
+            path_desc: "Test",
+            path: Some(temp_dir.clone()),
+            is_recycle_bin: false,
+            tier: CleanTier::Safe,
+        };
+
+        let (size, count) = scan_target(&target);
+        assert!(count >= 1);
+        assert!(size >= 18);
+
+        let (freed, cleaned) = clean_target(&target);
+        assert!(cleaned >= 1);
+        assert!(freed >= 18);
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

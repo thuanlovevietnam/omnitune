@@ -1417,6 +1417,32 @@ impl OptimizerApp {
         }
     }
 
+    fn refresh_clean_categories(&mut self) {
+        let targets = get_default_targets();
+        for (i, target) in targets.iter().enumerate() {
+            let (size, count) = scan_target(target);
+            if let Some(cat) = self.clean_categories.get_mut(i) {
+                cat.size_bytes = size;
+                cat.file_count = count;
+            }
+        }
+    }
+
+    fn clean_by_tier(&mut self, tier: CleanTier) -> (u64, usize) {
+        let targets = get_default_targets();
+        let mut freed = 0u64;
+        let mut deleted = 0usize;
+        for target in &targets {
+            if target.tier == tier {
+                let (f_bytes, f_count) = clean_target(target);
+                freed += f_bytes;
+                deleted += f_count;
+            }
+        }
+        self.refresh_clean_categories();
+        (freed, deleted)
+    }
+
     fn run_quick_optimize(&mut self) {
         // 1. Áp dụng toàn bộ thông số tối ưu phần cứng & Windows
         self.apply_all_criteria();
@@ -1428,24 +1454,7 @@ impl OptimizerApp {
         );
 
         // 2. Dọn dẹp tệp rác Tầng 1 an toàn
-        let targets = get_default_targets();
-        let mut freed_junk = 0u64;
-        let mut deleted_files = 0usize;
-        for target in &targets {
-            if target.tier == CleanTier::Safe {
-                let (f_bytes, f_count) = clean_target(target);
-                freed_junk += f_bytes;
-                deleted_files += f_count;
-            }
-        }
-
-        for (i, target) in targets.iter().enumerate() {
-            let (size, count) = scan_target(target);
-            if let Some(cat) = self.clean_categories.get_mut(i) {
-                cat.size_bytes = size;
-                cat.file_count = count;
-            }
-        }
+        let (freed_junk, deleted_files) = self.clean_by_tier(CleanTier::Safe);
 
         // 3. Thu hồi bộ nhớ Working Set RAM
         let (freed_ram, count) = trim_working_sets(&mut self.sys);
@@ -1521,23 +1530,7 @@ impl OptimizerApp {
     }
 
     fn clean_drive_partition(&mut self) {
-        let targets = get_default_targets();
-        let mut freed_junk = 0u64;
-        let mut deleted_files = 0usize;
-        for target in &targets {
-            if target.tier == CleanTier::Safe {
-                let (f_bytes, f_count) = clean_target(target);
-                freed_junk += f_bytes;
-                deleted_files += f_count;
-            }
-        }
-        for (i, target) in targets.iter().enumerate() {
-            let (size, count) = scan_target(target);
-            if let Some(cat) = self.clean_categories.get_mut(i) {
-                cat.size_bytes = size;
-                cat.file_count = count;
-            }
-        }
+        let (freed_junk, deleted_files) = self.clean_by_tier(CleanTier::Safe);
         let msg = format!(
             "Dọn dẹp Ổ đĩa: Xóa {} tệp rác an toàn ({}), thu hồi không gian lưu trữ.",
             deleted_files,
@@ -3137,14 +3130,7 @@ impl OptimizerApp {
                     .fill(p.tab_inactive_bg)
                     .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
                 if ui.add(scan_btn).clicked() {
-                    let targets = get_default_targets();
-                    for (i, target) in targets.iter().enumerate() {
-                        let (size, count) = scan_target(target);
-                        if let Some(cat) = self.clean_categories.get_mut(i) {
-                            cat.size_bytes = size;
-                            cat.file_count = count;
-                        }
-                    }
+                    self.refresh_clean_categories();
                     let total_size: u64 = self.clean_categories.iter().map(|c| c.size_bytes).sum();
                     self.criteria_apply_msg = format!("✓ Quét xong: Phát hiện {}", format_bytes(total_size));
                 }
@@ -3156,15 +3142,8 @@ impl OptimizerApp {
             let clean_safe_btn = egui::Button::new(RichText::new("Dọn rác an toàn").size(typography::BTN_NORMAL).color(Color32::WHITE))
                 .fill(Color32::from_rgb(16, 120, 60));
             if ui.add(clean_safe_btn).clicked() {
-                let targets = get_default_targets();
-                let mut freed = 0u64;
-                for target in &targets {
-                    if target.tier == CleanTier::Safe {
-                        let (f, _) = clean_target(target);
-                        freed += f;
-                    }
-                }
-                self.criteria_apply_msg = format!("✓ Đã dọn an toàn {}.", format_bytes(freed));
+                let (freed, count) = self.clean_by_tier(CleanTier::Safe);
+                self.criteria_apply_msg = format!("✓ Đã dọn an toàn {} ({} tệp).", format_bytes(freed), count);
             }
 
             let pro_unlocked = is_pro_active(&self.license);
@@ -3181,15 +3160,41 @@ impl OptimizerApp {
                     self.show_license_modal = true;
                     self.license_feedback_msg = "Tính năng dọn cache lập trình viên (NPM/Go/Cargo hàng GB) chỉ có trên OmniTune Pro (hoặc trải nghiệm dùng thử 7 ngày). Mở khóa ngay!".to_string();
                 } else {
-                    let targets = get_default_targets();
-                    let mut freed = 0u64;
-                    for target in &targets {
-                        if target.tier == CleanTier::Developer {
-                            let (f, _) = clean_target(target);
-                            freed += f;
-                        }
+                    let (freed, count) = self.clean_by_tier(CleanTier::Developer);
+                    self.criteria_apply_msg = format!("✓ Đã dọn Dev Cache {} ({} tệp).", format_bytes(freed), count);
+                }
+            }
+
+            let sys_btn = egui::Button::new(
+                RichText::new("Dọn bảo trì Windows")
+                    .size(typography::BTN_NORMAL)
+                    .strong()
+                    .color(if pro_unlocked { Color32::WHITE } else { Color32::from_rgb(15, 23, 42) }),
+            )
+            .fill(if pro_unlocked { Color32::from_rgb(37, 99, 235) } else { Color32::from_rgb(245, 158, 11) });
+            if ui.add(sys_btn).on_hover_text("Xóa Windows Update Cache & Prefetch. Yêu cầu Pro & quyền Administrator.").clicked() {
+                if !pro_unlocked {
+                    self.show_license_modal = true;
+                    self.license_feedback_msg = "Tính năng dọn bảo trì hệ thống chuyên sâu (Windows Update & Prefetch) chỉ có trên OmniTune Pro. Mở khóa ngay!".to_string();
+                } else {
+                    let before_count: usize = self.clean_categories
+                        .iter()
+                        .filter(|c| c.tier == CleanTier::SystemMaintenance)
+                        .map(|c| c.file_count)
+                        .sum();
+                    let (freed, count) = self.clean_by_tier(CleanTier::SystemMaintenance);
+                    let remaining: usize = self.clean_categories
+                        .iter()
+                        .filter(|c| c.tier == CleanTier::SystemMaintenance)
+                        .map(|c| c.file_count)
+                        .sum();
+                    if count == 0 && (remaining > 0 || before_count > 0) {
+                        self.criteria_apply_msg = "Không thể xóa tệp Windows (Cần chạy OmniTune với quyền Administrator).".to_string();
+                    } else if count == 0 {
+                        self.criteria_apply_msg = "Bộ nhớ đệm bảo trì hệ thống đã sạch.".to_string();
+                    } else {
+                        self.criteria_apply_msg = format!("✓ Đã dọn bảo trì hệ thống {} ({} tệp).", format_bytes(freed), count);
                     }
-                    self.criteria_apply_msg = format!("✓ Đã dọn Dev Cache {}.", format_bytes(freed));
                 }
             }
         });
@@ -3220,11 +3225,28 @@ impl OptimizerApp {
                     if ui.add(clean_btn).clicked() {
                         let targets = get_default_targets();
                         if let Some(t) = targets.into_iter().find(|t| t.name == item.name) {
-                            if t.tier == CleanTier::Developer && !self.check_pro_gate("Dọn dẹp Dev Cache") {
+                            if (t.tier == CleanTier::Developer || t.tier == CleanTier::SystemMaintenance)
+                                && !self.check_pro_gate("Dọn dẹp rác nâng cao")
+                            {
                                 // Gated by Pro
                             } else {
-                                let (f, _) = clean_target(&t);
-                                self.criteria_apply_msg = format!("✓ Đã dọn {} từ '{}'", format_bytes(f), item.name);
+                                let (f, c) = clean_target(&t);
+                                self.refresh_clean_categories();
+                                if c == 0 && t.tier == CleanTier::SystemMaintenance {
+                                    let remaining = self
+                                        .clean_categories
+                                        .iter()
+                                        .find(|cat| cat.name == item.name)
+                                        .map(|cat| cat.file_count)
+                                        .unwrap_or(0);
+                                    if remaining > 0 {
+                                        self.criteria_apply_msg = format!("Không thể xóa '{}' (Cần chạy OmniTune với quyền Administrator).", item.name);
+                                    } else {
+                                        self.criteria_apply_msg = format!("✓ '{}' đã sạch.", item.name);
+                                    }
+                                } else {
+                                    self.criteria_apply_msg = format!("✓ Đã dọn {} ({} tệp) từ '{}'", format_bytes(f), c, item.name);
+                                }
                             }
                         }
                     }
@@ -4082,17 +4104,10 @@ impl OptimizerApp {
                     ui,
                     &p,
                     "6. Dọn dẹp rác hệ thống Tầng 1",
-                    "Xóa an toàn cache Temp, Prefetch, Log và Thumbnail",
+                    "Xóa an toàn User Temp, System Temp, Crash Dumps và Browser Cache",
                     "Dọn ngay",
                     || {
-                        let targets = get_default_targets();
-                        let mut freed = 0u64;
-                        for target in &targets {
-                            if target.tier == CleanTier::Safe {
-                                let (f, _) = clean_target(target);
-                                freed += f;
-                            }
-                        }
+                        let (freed, _) = self.clean_by_tier(CleanTier::Safe);
                         self.criteria_apply_msg =
                             format!("✓ Đã dọn sạch {} rác an toàn.", format_bytes(freed));
                     },
@@ -4164,14 +4179,7 @@ impl OptimizerApp {
                         if !self.check_pro_gate("Dọn dẹp Dev Cache") {
                             return;
                         }
-                        let targets = get_default_targets();
-                        let mut freed = 0u64;
-                        for target in &targets {
-                            if target.tier == CleanTier::Developer {
-                                let (f, _) = clean_target(target);
-                                freed += f;
-                            }
-                        }
+                        let (freed, _) = self.clean_by_tier(CleanTier::Developer);
                         self.criteria_apply_msg = format!("✓ Đã dọn sạch {} Dev Cache.", format_bytes(freed));
                     },
                 );
@@ -4191,12 +4199,35 @@ impl OptimizerApp {
                 );
             },
             |ui| {
-                render_info_chip(
+                render_action_chip(
                     ui,
                     &p,
-                    "4. Tự động dọn rác tầng sâu",
-                    "Phân tích chuyên sâu các thư mục ẩn Package Manager, Crash Dumps và WinSxS Backup",
-                    None,
+                    "4. Dọn bảo trì hệ thống (Tầng 3)",
+                    "Xóa Windows Update Cache và Prefetch (Cần quyền Administrator)",
+                    "Dọn ngay",
+                    || {
+                        if !self.check_pro_gate("Dọn dẹp bảo trì hệ thống") {
+                            return;
+                        }
+                        let before_count: usize = self.clean_categories
+                            .iter()
+                            .filter(|c| c.tier == CleanTier::SystemMaintenance)
+                            .map(|c| c.file_count)
+                            .sum();
+                        let (freed, count) = self.clean_by_tier(CleanTier::SystemMaintenance);
+                        let remaining: usize = self.clean_categories
+                            .iter()
+                            .filter(|c| c.tier == CleanTier::SystemMaintenance)
+                            .map(|c| c.file_count)
+                            .sum();
+                        if count == 0 && (remaining > 0 || before_count > 0) {
+                            self.criteria_apply_msg = "Không thể xóa tệp Windows (Cần chạy OmniTune với quyền Administrator).".to_string();
+                        } else if count == 0 {
+                            self.criteria_apply_msg = "Bộ nhớ đệm bảo trì hệ thống đã sạch.".to_string();
+                        } else {
+                            self.criteria_apply_msg = format!("✓ Đã dọn sạch {} bảo trì hệ thống ({} tệp).", format_bytes(freed), count);
+                        }
+                    },
                 );
             },
         );
