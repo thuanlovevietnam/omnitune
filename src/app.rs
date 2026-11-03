@@ -48,6 +48,163 @@ pub enum PartitionTab {
     Drive,
 }
 
+impl PartitionTab {
+    pub const ALL: [PartitionTab; 4] = [
+        PartitionTab::Cpu,
+        PartitionTab::Ram,
+        PartitionTab::Pin,
+        PartitionTab::Drive,
+    ];
+
+    pub const fn icon(&self) -> &'static str {
+        match self {
+            PartitionTab::Cpu => "⚡",
+            PartitionTab::Ram => "🧠",
+            PartitionTab::Pin => "🔋",
+            PartitionTab::Drive => "💾",
+        }
+    }
+
+    pub const fn card_title(&self) -> &'static str {
+        match self {
+            PartitionTab::Cpu => "⚡ CPU",
+            PartitionTab::Ram => "🧠 RAM",
+            PartitionTab::Pin => "🔋 PIN",
+            PartitionTab::Drive => "💾 DRIVE",
+        }
+    }
+
+    pub const fn full_title(&self) -> &'static str {
+        match self {
+            PartitionTab::Cpu => "CPU & TIẾN TRÌNH",
+            PartitionTab::Ram => "RAM & CACHE",
+            PartitionTab::Pin => "PIN, NGUỒN ĐIỆN & TẢN NHIỆT",
+            PartitionTab::Drive => "LƯU TRỮ & Ổ ĐĨA SSD/HDD",
+        }
+    }
+
+    pub const fn pro_banner_title(&self) -> &'static str {
+        match self {
+            PartitionTab::Cpu => "BỘ XỬ LÝ (CPU)",
+            PartitionTab::Ram => "BỘ NHỚ (RAM)",
+            PartitionTab::Pin => "NGUỒN ĐIỆN & PIN",
+            PartitionTab::Drive => "LƯU TRỮ & Ổ ĐĨA",
+        }
+    }
+
+    pub const fn clean_action(&self) -> (&'static str, &'static str) {
+        match self {
+            PartitionTab::Cpu => (
+                "TỐI ƯU TIẾN TRÌNH & ECOQOS",
+                "Tối ưu mức ưu tiên và ép chế độ tiết kiệm EcoQoS cho các app ngầm",
+            ),
+            PartitionTab::Ram => (
+                "THU HỒI & DỌN RAM",
+                "Thu hồi bộ nhớ đệm thừa từ tất cả các tiến trình",
+            ),
+            PartitionTab::Pin => (
+                "BẬT TIẾT KIỆM PIN",
+                "Hạ độ sáng, kích hoạt tản nhiệt êm và hạn chế xung CPU khi dùng pin",
+            ),
+            PartitionTab::Drive => (
+                "DỌN RÁC & SSD TRIM",
+                "Xóa sạch tệp rác Tầng 1 an toàn và chủ động kích hoạt TRIM khối nhớ SSD",
+            ),
+        }
+    }
+
+    pub const fn basic_chips(&self) -> usize {
+        match self {
+            PartitionTab::Cpu => 18,
+            PartitionTab::Ram => 4,
+            PartitionTab::Pin => 6,
+            PartitionTab::Drive => 8,
+        }
+    }
+
+    pub const fn pro_chips(&self) -> usize {
+        match self {
+            PartitionTab::Cpu => 4,
+            PartitionTab::Ram => 4,
+            PartitionTab::Pin => 2,
+            PartitionTab::Drive => 4,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub const fn total_chips(&self) -> usize {
+        self.basic_chips() + self.pro_chips()
+    }
+
+    #[allow(dead_code)]
+    pub const fn max_basic_tweaks(&self) -> usize {
+        match self {
+            PartitionTab::Cpu => 14,
+            PartitionTab::Ram => 2,
+            PartitionTab::Pin => 5,
+            PartitionTab::Drive => 5,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub const fn max_pro_tweaks(&self) -> usize {
+        match self {
+            PartitionTab::Cpu => 3,
+            PartitionTab::Ram => 2,
+            PartitionTab::Pin => 1,
+            PartitionTab::Drive => 0,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub const fn max_total_tweaks(&self) -> usize {
+        self.max_basic_tweaks() + self.max_pro_tweaks()
+    }
+}
+
+/// Tính số lượng thông số tối ưu khả dụng (basic, pro) theo đặc tính phần cứng thực tế
+pub fn calculate_partition_tweaks(
+    tab: PartitionTab,
+    is_pro: bool,
+    has_battery: bool,
+    battery_supported: bool,
+    is_ssd: bool,
+) -> (usize, usize) {
+    let basic = match tab {
+        PartitionTab::Cpu => 14,
+        PartitionTab::Ram => 2,
+        PartitionTab::Pin => {
+            if has_battery {
+                5 // cpu_limit_dc, brightness, cooling, keep_awake, hibernate
+            } else {
+                3 // cooling, keep_awake, hibernate (không có pin/DC)
+            }
+        }
+        PartitionTab::Drive => {
+            if is_ssd {
+                5 // sysmain, last_access, 8dot3, trim, wait_to_kill
+            } else {
+                4 // không có SSD TRIM
+            }
+        }
+    };
+
+    let pro = match tab {
+        PartitionTab::Cpu => 3, // timer_1ms, disable_telemetry, deep_debloat
+        PartitionTab::Ram => 2, // auto_ram, ram_threshold
+        PartitionTab::Pin => {
+            if battery_supported {
+                1 // battery_threshold_80
+            } else {
+                0
+            }
+        }
+        PartitionTab::Drive => 0,
+    };
+
+    (basic, if is_pro { pro } else { 0 })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PartitionSubTab {
     Info,
@@ -110,7 +267,7 @@ pub struct OptimizerApp {
     // Power settings
     brightness_level: u32,
 
-    // Storage, Network & System Tuning (33 Parameters)
+    // Storage, Network & System Tuning (Optimization Parameters)
     ram_trim_threshold_pct: u32,
     sysmain_disabled: bool,
     disable_ntfs_last_access: bool,
@@ -484,7 +641,7 @@ fn render_partition_card(
                         ("▼ Chi tiết & Cài đặt", palette.text_secondary)
                     };
                     ui.label(
-                        RichText::new(format!("{} ({} mục)", toggle_txt, param_count))
+                        RichText::new(format!("{} ({} thông số)", toggle_txt, param_count))
                             .size(typography::DETAIL_TEXT)
                             .strong()
                             .color(toggle_color),
@@ -944,7 +1101,7 @@ impl OptimizerApp {
         self.config.battery_threshold_80 = self.protection.battery_threshold_enabled;
         self.config.run_on_startup = self.run_on_startup;
 
-        // 33 parameters sync
+        // Hardware-aware optimization parameters sync
         self.config.cpu_min_state_pct = self.cpu_min_state_pct;
         self.config.win32_priority_boost = self.win32_priority_boost;
         self.config.fast_shutdown_recovery = self.fast_shutdown_recovery;
@@ -961,6 +1118,39 @@ impl OptimizerApp {
         self.config.deep_debloat = self.deep_debloat;
 
         save_config(&self.config);
+    }
+
+    pub fn is_battery_threshold_supported(&self) -> bool {
+        self.protection.battery_support.kind == crate::battery_limiter::BatterySupportKind::Supported
+    }
+
+    pub fn partition_applicable_tweaks(&self, tab: PartitionTab, is_pro: bool) -> usize {
+        let (basic, pro) = calculate_partition_tweaks(
+            tab,
+            is_pro,
+            self.power_status.has_battery,
+            self.is_battery_threshold_supported(),
+            self.autonomous.hardware_profile.is_ssd,
+        );
+        basic + pro
+    }
+
+    pub fn partition_basic_tweaks(&self, tab: PartitionTab) -> usize {
+        let (basic, _) = calculate_partition_tweaks(
+            tab,
+            false,
+            self.power_status.has_battery,
+            self.is_battery_threshold_supported(),
+            self.autonomous.hardware_profile.is_ssd,
+        );
+        basic
+    }
+
+    pub fn total_applicable_tweaks(&self, is_pro: bool) -> usize {
+        PartitionTab::ALL
+            .iter()
+            .map(|&tab| self.partition_applicable_tweaks(tab, is_pro))
+            .sum()
     }
 
     pub fn apply_all_criteria(&mut self) {
@@ -1033,10 +1223,11 @@ impl OptimizerApp {
         crate::power::apply_permanent_windows_system_tweaks();
 
         self.sync_config();
-        let msg = "✓ Đã áp dụng toàn bộ 33 thông số tối ưu vào hệ điều hành!".to_string();
+        let applied_count = self.total_applicable_tweaks(is_pro);
+        let msg = format!("✓ Đã áp dụng toàn bộ {} thông số tối ưu vào hệ điều hành!", applied_count);
         self.criteria_apply_msg = msg.clone();
         self.quick_opt_msg = msg;
-        self.autonomous.log("[CÀI ĐẶT]", "Đã áp dụng và ghi thành công 33 thông số tối ưu vào Windows.".to_string());
+        self.autonomous.log("[CÀI ĐẶT]", format!("Đã áp dụng và ghi thành công {} thông số tối ưu vào Windows.", applied_count));
     }
 
     fn calculate_health_score(&self) -> (u32, &'static str, Color32, Vec<String>) {
@@ -1227,7 +1418,7 @@ impl OptimizerApp {
     }
 
     fn run_quick_optimize(&mut self) {
-        // 1. Áp dụng toàn bộ 33 thông số tối ưu phần cứng & Windows
+        // 1. Áp dụng toàn bộ thông số tối ưu phần cứng & Windows
         self.apply_all_criteria();
         self.autonomous.set_operating_mode(
             OperatingMode::HardwareOptimal,
@@ -1805,6 +1996,7 @@ impl OptimizerApp {
         ui.add_space(8.0);
 
         // Row 1: CPU (Col 0) & RAM (Col 1)
+        let is_pro = is_pro_active(&self.license);
         let is_cpu = self.selected_partition == Some(PartitionTab::Cpu);
         let is_ram = self.selected_partition == Some(PartitionTab::Ram);
         let is_pin = self.selected_partition == Some(PartitionTab::Pin);
@@ -1818,8 +2010,8 @@ impl OptimizerApp {
             cpu_clicked = render_partition_card(
                 &mut cols[0],
                 &p,
-                "⚡ CPU",
-                17,
+                PartitionTab::Cpu.card_title(),
+                self.partition_applicable_tweaks(PartitionTab::Cpu, is_pro),
                 is_cpu,
                 |ui| {
                     let cpu = self.protection.cpu_usage;
@@ -1850,8 +2042,8 @@ impl OptimizerApp {
             ram_clicked = render_partition_card(
                 &mut cols[1],
                 &p,
-                "🧠 RAM",
-                4,
+                PartitionTab::Ram.card_title(),
+                self.partition_applicable_tweaks(PartitionTab::Ram, is_pro),
                 is_ram,
                 |ui| {
                     let load = self.mem_stats.load_percent;
@@ -1887,8 +2079,8 @@ impl OptimizerApp {
             pin_clicked = render_partition_card(
                 &mut cols[0],
                 &p,
-                "🔋 PIN",
-                6,
+                PartitionTab::Pin.card_title(),
+                self.partition_applicable_tweaks(PartitionTab::Pin, is_pro),
                 is_pin,
                 |ui| {
                     if self.power_status.has_battery {
@@ -1928,8 +2120,8 @@ impl OptimizerApp {
             drv_clicked = render_partition_card(
                 &mut cols[1],
                 &p,
-                "💾 DRIVE",
-                6,
+                PartitionTab::Drive.card_title(),
+                self.partition_applicable_tweaks(PartitionTab::Drive, is_pro),
                 is_drv,
                 |ui| {
                     let drv_type = if self.autonomous.hardware_profile.is_ssd { "SSD Siêu tốc" } else { "HDD Cơ học" };
@@ -1979,40 +2171,11 @@ impl OptimizerApp {
     fn render_partition_unified_view(&mut self, ui: &mut egui::Ui, active: PartitionTab) {
         let p = self.palette;
         p.modern_card(ui, |ui| {
-            let (part_icon, part_title, basic_count, pro_count, clean_btn_txt, clean_tooltip) = match active {
-                PartitionTab::Cpu => (
-                    "⚡",
-                    "CPU & TIẾN TRÌNH",
-                    16,
-                    4,
-                    "TỐI ƯU TIẾN TRÌNH & ECOQOS",
-                    "Tối ưu mức ưu tiên và ép chế độ tiết kiệm EcoQoS cho các app ngầm",
-                ),
-                PartitionTab::Ram => (
-                    "🧠",
-                    "RAM & CACHE",
-                    4,
-                    4,
-                    "THU HỒI & DỌN RAM",
-                    "Thu hồi bộ nhớ đệm thừa từ tất cả các tiến trình",
-                ),
-                PartitionTab::Pin => (
-                    "🔋",
-                    "PIN, NGUỒN ĐIỆN & TẢN NHIỆT",
-                    6,
-                    2,
-                    "BẬT TIẾT KIỆM PIN",
-                    "Hạ độ sáng, kích hoạt tản nhiệt êm và hạn chế xung CPU khi dùng pin",
-                ),
-                PartitionTab::Drive => (
-                    "💾",
-                    "LƯU TRỮ & Ổ ĐĨA SSD/HDD",
-                    8,
-                    4,
-                    "DỌN RÁC & SSD TRIM",
-                    "Xóa sạch tệp rác Tầng 1 an toàn và chủ động kích hoạt TRIM khối nhớ SSD",
-                ),
-            };
+            let part_icon = active.icon();
+            let part_title = active.full_title();
+            let (clean_btn_txt, clean_tooltip) = active.clean_action();
+            let basic_chips = active.basic_chips();
+            let pro_chips = active.pro_chips();
 
             ui.horizontal(|ui| {
                 ui.label(
@@ -2058,7 +2221,7 @@ impl OptimizerApp {
                 }
 
                 let settings_btn = egui::Button::new(
-                    RichText::new(format!("⚙️ CÀI ĐẶT ({})", basic_count))
+                    RichText::new(format!("⚙️ CÀI ĐẶT ({} MỤC)", basic_chips))
                         .size(typography::CHIP_TITLE)
                         .strong()
                         .color(if settings_active { Color32::WHITE } else { p.text_primary }),
@@ -2151,11 +2314,15 @@ impl OptimizerApp {
                     ui.add_space(6.0);
 
                     // Cài đặt
+                    let basic_tweaks = self.partition_basic_tweaks(active);
                     ui.label(
-                        RichText::new(format!("{} THIẾT LẬP CÀI ĐẶT:", basic_count))
-                            .size(typography::CHIP_TITLE)
-                            .strong()
-                            .color(p.text_primary),
+                        RichText::new(format!(
+                            "{} MỤC THIẾT LẬP ({} THÔNG SỐ KHẢ DỤNG):",
+                            basic_chips, basic_tweaks
+                        ))
+                        .size(typography::CHIP_TITLE)
+                        .strong()
+                        .color(p.text_primary),
                     );
                     ui.add_space(4.0);
 
@@ -2185,12 +2352,7 @@ impl OptimizerApp {
                     });
                 }
                 PartitionSubTab::Pro => {
-                    self.render_pro_banner(ui, match active {
-                        PartitionTab::Cpu => "BỘ XỬ LÝ (CPU)",
-                        PartitionTab::Ram => "BỘ NHỚ (RAM)",
-                        PartitionTab::Pin => "NGUỒN ĐIỆN & PIN",
-                        PartitionTab::Drive => "LƯU TRỮ & Ổ ĐĨA",
-                    });
+                    self.render_pro_banner(ui, active.pro_banner_title());
 
                     if !self.criteria_apply_msg.is_empty() {
                         ui.add_space(2.0);
@@ -2200,7 +2362,7 @@ impl OptimizerApp {
                     ui.add_space(8.0);
 
                     ui.label(
-                        RichText::new(format!("{} TÍNH NĂNG CHUYÊN SÂU DÀNH CHO GÓI PRO VIP:", pro_count))
+                        RichText::new(format!("{} TÍNH NĂNG CHUYÊN SÂU DÀNH CHO GÓI PRO VIP:", pro_chips))
                             .size(typography::CHIP_TITLE)
                             .strong()
                             .color(p.warn_amber),
@@ -2359,6 +2521,25 @@ impl OptimizerApp {
 
                         ui.label(RichText::new("Xung nhịp:").size(typography::DETAIL_TEXT).color(p.text_secondary));
                         ui.label(RichText::new(format!("Cơ sở {} MHz • Thời gian thực {} MHz", self.autonomous.hardware_profile.cpu_base_mhz, cur_cpu_mhz)).size(typography::DETAIL_TEXT).strong().color(p.accent_blue));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Đồ họa (GPU):").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        let gpu_type_tag = if self.autonomous.hardware_profile.is_dedicated_gpu { "GPU Rời" } else { "GPU Tích hợp" };
+                        let vram_tag = if self.autonomous.hardware_profile.gpu_vram_mb > 0 {
+                            format!(" • {} MB VRAM", self.autonomous.hardware_profile.gpu_vram_mb)
+                        } else {
+                            "".to_string()
+                        };
+                        ui.label(RichText::new(format!("{} [{}{}]", self.autonomous.hardware_profile.gpu_name, gpu_type_tag, vram_tag)).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
+                        ui.end_row();
+
+                        ui.label(RichText::new("Driver & HAGS:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        let hags_str = if self.autonomous.hardware_profile.gpu_supports_hags {
+                            "Hỗ trợ HAGS"
+                        } else {
+                            "Không hỗ trợ HAGS"
+                        };
+                        ui.label(RichText::new(format!("Phiên bản {} • {}", self.autonomous.hardware_profile.gpu_driver_version, hags_str)).size(typography::DETAIL_TEXT).strong().color(p.accent_blue));
                         ui.end_row();
 
                         ui.label(RichText::new("Thiết lập tối ưu:").size(typography::DETAIL_TEXT).color(p.text_secondary));
@@ -3303,6 +3484,44 @@ impl OptimizerApp {
                 );
             },
         );
+
+        // Row 9: GPU Acceleration & Profile Status
+        render_settings_row!(
+            ui,
+            |ui| {
+                let hags_status = if self.autonomous.hardware_profile.gpu_supports_hags {
+                    "Đã bật HAGS"
+                } else {
+                    "Chuẩn FSE/VRR"
+                };
+                let gpu_desc = format!(
+                    "Tối ưu DirectX FSE/VRR & Multimedia GPU Priority 8 cho {}",
+                    self.autonomous.hardware_profile.gpu_name
+                );
+                render_info_chip(
+                    ui,
+                    &p,
+                    "17. Tăng tốc phần cứng GPU",
+                    &gpu_desc,
+                    Some((hags_status, p.success_green)),
+                );
+            },
+            |ui| {
+                let vram_desc = if self.autonomous.hardware_profile.is_dedicated_gpu {
+                    format!("GPU rời {} MB VRAM, PCIe ASPM điều tiết theo nguồn", self.autonomous.hardware_profile.gpu_vram_mb)
+                } else {
+                    let vram = crate::gpu::calculate_optimal_igpu_vram_mb(self.autonomous.hardware_profile.ram_total_gb);
+                    format!("GPU tích hợp, VRAM chia sẻ {} MB theo RAM {:.1} GB", vram, self.autonomous.hardware_profile.ram_total_gb)
+                };
+                render_info_chip(
+                    ui,
+                    &p,
+                    "18. Phân bổ VRAM & PCIe ASPM",
+                    &vram_desc,
+                    None,
+                );
+            },
+        );
     }
 
     fn render_cpu_pro_settings(&mut self, ui: &mut egui::Ui) {
@@ -3981,5 +4200,161 @@ impl OptimizerApp {
                 );
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_partition_ui_chips_count() {
+        assert_eq!(PartitionTab::Cpu.basic_chips(), 18);
+        assert_eq!(PartitionTab::Cpu.pro_chips(), 4);
+        assert_eq!(PartitionTab::Cpu.total_chips(), 22);
+
+        assert_eq!(PartitionTab::Ram.basic_chips(), 4);
+        assert_eq!(PartitionTab::Ram.pro_chips(), 4);
+        assert_eq!(PartitionTab::Ram.total_chips(), 8);
+
+        assert_eq!(PartitionTab::Pin.basic_chips(), 6);
+        assert_eq!(PartitionTab::Pin.pro_chips(), 2);
+        assert_eq!(PartitionTab::Pin.total_chips(), 8);
+
+        assert_eq!(PartitionTab::Drive.basic_chips(), 8);
+        assert_eq!(PartitionTab::Drive.pro_chips(), 4);
+        assert_eq!(PartitionTab::Drive.total_chips(), 12);
+
+        let total_chips: usize = PartitionTab::ALL.iter().map(|p| p.total_chips()).sum();
+        assert_eq!(total_chips, 50);
+    }
+
+    #[test]
+    fn test_partition_max_tweaks() {
+        assert_eq!(PartitionTab::Cpu.max_basic_tweaks(), 14);
+        assert_eq!(PartitionTab::Cpu.max_pro_tweaks(), 3);
+        assert_eq!(PartitionTab::Cpu.max_total_tweaks(), 17);
+
+        assert_eq!(PartitionTab::Ram.max_basic_tweaks(), 2);
+        assert_eq!(PartitionTab::Ram.max_pro_tweaks(), 2);
+        assert_eq!(PartitionTab::Ram.max_total_tweaks(), 4);
+
+        assert_eq!(PartitionTab::Pin.max_basic_tweaks(), 5);
+        assert_eq!(PartitionTab::Pin.max_pro_tweaks(), 1);
+        assert_eq!(PartitionTab::Pin.max_total_tweaks(), 6);
+
+        assert_eq!(PartitionTab::Drive.max_basic_tweaks(), 5);
+        assert_eq!(PartitionTab::Drive.max_pro_tweaks(), 0);
+        assert_eq!(PartitionTab::Drive.max_total_tweaks(), 5);
+
+        let total_basic: usize = PartitionTab::ALL.iter().map(|p| p.max_basic_tweaks()).sum();
+        let total_pro: usize = PartitionTab::ALL.iter().map(|p| p.max_pro_tweaks()).sum();
+        assert_eq!(total_basic, 26);
+        assert_eq!(total_pro, 6);
+        assert_eq!(total_basic + total_pro, 32);
+    }
+
+    #[test]
+    fn test_hardware_aware_laptop_supported_battery() {
+        let is_ssd = true;
+        let has_battery = true;
+        let battery_supported = true;
+
+        // Free mode
+        let free_counts: Vec<usize> = PartitionTab::ALL
+            .iter()
+            .map(|&tab| {
+                let (b, p) = calculate_partition_tweaks(tab, false, has_battery, battery_supported, is_ssd);
+                b + p
+            })
+            .collect();
+        assert_eq!(free_counts, vec![14, 2, 5, 5]);
+        assert_eq!(free_counts.iter().sum::<usize>(), 26);
+
+        // Pro mode
+        let pro_counts: Vec<usize> = PartitionTab::ALL
+            .iter()
+            .map(|&tab| {
+                let (b, p) = calculate_partition_tweaks(tab, true, has_battery, battery_supported, is_ssd);
+                b + p
+            })
+            .collect();
+        assert_eq!(pro_counts, vec![17, 4, 6, 5]);
+        assert_eq!(pro_counts.iter().sum::<usize>(), 32);
+    }
+
+    #[test]
+    fn test_hardware_aware_laptop_unsupported_battery() {
+        let is_ssd = true;
+        let has_battery = true;
+        let battery_supported = false;
+
+        let pro_counts: Vec<usize> = PartitionTab::ALL
+            .iter()
+            .map(|&tab| {
+                let (b, p) = calculate_partition_tweaks(tab, true, has_battery, battery_supported, is_ssd);
+                b + p
+            })
+            .collect();
+        assert_eq!(pro_counts, vec![17, 4, 5, 5]);
+        assert_eq!(pro_counts.iter().sum::<usize>(), 31);
+    }
+
+    #[test]
+    fn test_hardware_aware_desktop_ssd() {
+        let is_ssd = true;
+        let has_battery = false;
+        let battery_supported = false;
+
+        // Free mode
+        let free_counts: Vec<usize> = PartitionTab::ALL
+            .iter()
+            .map(|&tab| {
+                let (b, p) = calculate_partition_tweaks(tab, false, has_battery, battery_supported, is_ssd);
+                b + p
+            })
+            .collect();
+        assert_eq!(free_counts, vec![14, 2, 3, 5]);
+        assert_eq!(free_counts.iter().sum::<usize>(), 24);
+
+        // Pro mode
+        let pro_counts: Vec<usize> = PartitionTab::ALL
+            .iter()
+            .map(|&tab| {
+                let (b, p) = calculate_partition_tweaks(tab, true, has_battery, battery_supported, is_ssd);
+                b + p
+            })
+            .collect();
+        assert_eq!(pro_counts, vec![17, 4, 3, 5]);
+        assert_eq!(pro_counts.iter().sum::<usize>(), 29);
+    }
+
+    #[test]
+    fn test_hardware_aware_desktop_hdd() {
+        let is_ssd = false;
+        let has_battery = false;
+        let battery_supported = false;
+
+        // Free mode
+        let free_counts: Vec<usize> = PartitionTab::ALL
+            .iter()
+            .map(|&tab| {
+                let (b, p) = calculate_partition_tweaks(tab, false, has_battery, battery_supported, is_ssd);
+                b + p
+            })
+            .collect();
+        assert_eq!(free_counts, vec![14, 2, 3, 4]);
+        assert_eq!(free_counts.iter().sum::<usize>(), 23);
+
+        // Pro mode
+        let pro_counts: Vec<usize> = PartitionTab::ALL
+            .iter()
+            .map(|&tab| {
+                let (b, p) = calculate_partition_tweaks(tab, true, has_battery, battery_supported, is_ssd);
+                b + p
+            })
+            .collect();
+        assert_eq!(pro_counts, vec![17, 4, 3, 4]);
+        assert_eq!(pro_counts.iter().sum::<usize>(), 28);
     }
 }

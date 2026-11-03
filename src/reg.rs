@@ -3,9 +3,9 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
 use windows_sys::Win32::System::Registry::{
-    RegCloseKey, RegCreateKeyW, RegEnumKeyExW, RegEnumValueW, RegOpenKeyExW, RegQueryValueExW,
-    RegSetValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_BINARY,
-    REG_DWORD, REG_EXPAND_SZ, REG_SZ,
+    RegCloseKey, RegCreateKeyW, RegDeleteValueW, RegEnumKeyExW, RegEnumValueW, RegOpenKeyExW,
+    RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ,
+    KEY_WRITE, REG_BINARY, REG_DWORD, REG_EXPAND_SZ, REG_SZ,
 };
 
 fn to_wide(s: &str) -> Vec<u16> {
@@ -116,6 +116,21 @@ pub fn reg_set_string(root: HKEY, subkey: &str, value_name: &str, val: &str) -> 
             str_w.as_ptr() as *const u8,
             (str_w.len() * 2) as u32,
         );
+        RegCloseKey(hkey);
+        ret == 0
+    }
+}
+
+pub fn reg_delete_value(root: HKEY, subkey: &str, value_name: &str) -> bool {
+    unsafe {
+        let subkey_w = to_wide(subkey);
+        let mut hkey: HKEY = std::mem::zeroed();
+        if RegOpenKeyExW(root, subkey_w.as_ptr(), 0, KEY_WRITE, &mut hkey) != 0 {
+            return false;
+        }
+
+        let val_w = to_wide(value_name);
+        let ret = RegDeleteValueW(hkey, val_w.as_ptr());
         RegCloseKey(hkey);
         ret == 0
     }

@@ -37,6 +37,9 @@ pub struct HardwareProfile {
     pub disk_fs: String,
     pub gpu_name: String,
     pub is_dedicated_gpu: bool,
+    pub gpu_vram_mb: u32,
+    pub gpu_driver_version: String,
+    pub gpu_supports_hags: bool,
     pub is_laptop: bool,
     pub optimal_cpu_dc_limit: u32,
     pub optimal_cpu_ac_limit: u32,
@@ -72,8 +75,8 @@ impl HardwareProfile {
         // 4. Disk Info
         let (is_ssd, disk_name, disk_total_bytes, disk_available_bytes, disk_fs) = detect_disk();
 
-        // 5. GPU Info
-        let (gpu_name, is_dedicated_gpu) = detect_gpu();
+        // 5. GPU Info (Probe phần cứng VRAM, Driver, HAGS)
+        let gpu_info = detect_gpu(os_build);
 
         // 6. Form Factor (Laptop vs Desktop)
         let power_status = crate::power::get_power_status();
@@ -107,8 +110,11 @@ impl HardwareProfile {
             disk_total_bytes,
             disk_available_bytes,
             disk_fs,
-            gpu_name,
-            is_dedicated_gpu,
+            gpu_name: gpu_info.name,
+            is_dedicated_gpu: gpu_info.is_dedicated,
+            gpu_vram_mb: gpu_info.vram_mb,
+            gpu_driver_version: gpu_info.driver_version,
+            gpu_supports_hags: gpu_info.supports_hags,
             is_laptop,
             optimal_cpu_dc_limit,
             optimal_cpu_ac_limit,
@@ -321,58 +327,127 @@ fn detect_disk() -> (bool, String, u64, u64, String) {
     (is_ssd, disk_name, disk_total_bytes, disk_available_bytes, disk_fs)
 }
 
-fn detect_gpu() -> (String, bool) {
+#[derive(Debug, Clone, PartialEq)]
+pub struct DetectedGpu {
+    pub name: String,
+    pub is_dedicated: bool,
+    pub vram_mb: u32,
+    pub driver_version: String,
+    pub supports_hags: bool,
+}
+
+fn detect_gpu(os_build: u32) -> DetectedGpu {
     let base_key = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
     let mut subkeys = crate::reg::reg_enum_subkeys(HKEY_LOCAL_MACHINE, base_key);
     if subkeys.is_empty() {
         subkeys = vec!["0000".to_string(), "0001".to_string(), "0002".to_string(), "0003".to_string()];
     }
-    let mut found_gpus = Vec::new();
+    let mut candidates = Vec::new();
 
     for sub in subkeys {
         if !sub.chars().all(|c| c.is_ascii_digit()) {
             continue;
         }
         let key_path = format!(r"{}\{}", base_key, sub);
-        if let Some(desc) = crate::reg::reg_read_string(HKEY_LOCAL_MACHINE, &key_path, "DriverDesc") {
+        let desc = crate::reg::reg_read_string(HKEY_LOCAL_MACHINE, &key_path, "DriverDesc")
+            .or_else(|| crate::reg::reg_read_string(HKEY_LOCAL_MACHINE, &key_path, "HardwareInformation.AdapterString"));
+
+        if let Some(desc) = desc {
             let trimmed = desc.trim().to_string();
             let upper = trimmed.to_uppercase();
             // Lọc các display adapter ảo
-            if upper.contains("SPACEDESK") || upper.contains("VIRTUAL") || upper.contains("MIRACAST") || upper.contains("CITRIX") {
+            if upper.contains("SPACEDESK")
+                || upper.contains("VIRTUAL")
+                || upper.contains("MIRACAST")
+                || upper.contains("CITRIX")
+                || upper.contains("RDP")
+            {
                 continue;
             }
-            if !trimmed.is_empty() && !found_gpus.contains(&trimmed) {
-                found_gpus.push(trimmed);
+
+            let driver_ver = crate::reg::reg_read_string(HKEY_LOCAL_MACHINE, &key_path, "DriverVersion")
+                .unwrap_or_else(|| "Unknown".to_string());
+
+            let mut vram_bytes = 0u64;
+            if let Some(qw) = crate::reg::reg_read_binary(HKEY_LOCAL_MACHINE, &key_path, "HardwareInformation.qwMemorySize") {
+                if qw.len() >= 8 {
+                    vram_bytes = u64::from_le_bytes(qw[..8].try_into().unwrap_or([0; 8]));
+                }
             }
+            if vram_bytes == 0 {
+                if let Some(dw) = crate::reg::reg_read_binary(HKEY_LOCAL_MACHINE, &key_path, "HardwareInformation.MemorySize") {
+                    if dw.len() >= 4 {
+                        vram_bytes = u32::from_le_bytes(dw[..4].try_into().unwrap_or([0; 4])) as u64;
+                    }
+                }
+            }
+            let vram_mb = (vram_bytes / (1024 * 1024)) as u32;
+
+            let match_id = crate::reg::reg_read_string(HKEY_LOCAL_MACHINE, &key_path, "MatchingDeviceId")
+                .unwrap_or_default()
+                .to_uppercase();
+
+            let is_nvidia = match_id.contains("VEN_10DE")
+                || upper.contains("NVIDIA")
+                || upper.contains("GEFORCE")
+                || upper.contains("RTX")
+                || upper.contains("GTX")
+                || upper.contains("QUADRO");
+            let is_amd = match_id.contains("VEN_1002") || upper.contains("RADEON");
+            let is_intel = match_id.contains("VEN_8086") || upper.contains("INTEL");
+
+            let is_dedicated = if is_nvidia {
+                true
+            } else if is_amd {
+                vram_mb >= 1024 || upper.contains("RX ") || upper.contains("R9 ") || upper.contains("R7 ") || upper.contains("PRO ")
+            } else if is_intel {
+                upper.contains("ARC") || upper.contains("IRIS XE MAX")
+            } else {
+                vram_mb >= 1024 && !upper.contains("BASIC")
+            };
+
+            // Dò tìm khả năng hỗ trợ HAGS thực tế của GPU driver
+            let mut supports_hags = false;
+            if os_build >= 19041 && is_dedicated {
+                if is_nvidia {
+                    supports_hags = upper.contains("GTX 10")
+                        || upper.contains("GTX 16")
+                        || upper.contains("RTX")
+                        || upper.contains("TITAN");
+                } else if is_amd {
+                    supports_hags = upper.contains("RX 5")
+                        || upper.contains("RX 6")
+                        || upper.contains("RX 7");
+                } else if is_intel {
+                    supports_hags = upper.contains("ARC");
+                }
+            }
+
+            candidates.push(DetectedGpu {
+                name: trimmed,
+                is_dedicated,
+                vram_mb,
+                driver_version: driver_ver,
+                supports_hags,
+            });
         }
     }
 
-    if found_gpus.is_empty() {
-        return ("Đồ họa cơ bản Windows".to_string(), false);
+    if candidates.is_empty() {
+        return DetectedGpu {
+            name: "Đồ họa cơ bản Windows".to_string(),
+            is_dedicated: false,
+            vram_mb: 0,
+            driver_version: "Generic".to_string(),
+            supports_hags: false,
+        };
     }
 
-    // Find if dedicated GPU exists
-    let dedicated_keywords = [
-        "NVIDIA", "GEFORCE", "RTX", "GTX", "QUADRO", "TITAN", "TESLA",
-        "RADEON RX", "RADEON PRO", "RADEON VII", "ARC A", "ARC PRO",
-    ];
-    let mut dedicated = false;
-    let mut primary_gpu = found_gpus[0].clone();
-
-    for g in &found_gpus {
-        let g_upper = g.to_uppercase();
-        if dedicated_keywords.iter().any(|&k| g_upper.contains(k)) {
-            dedicated = true;
-            primary_gpu = g.clone();
-            break;
-        }
+    if let Some(dgpu) = candidates.iter().find(|g| g.is_dedicated) {
+        dgpu.clone()
+    } else {
+        candidates[0].clone()
     }
-
-    if found_gpus.len() > 1 && !dedicated {
-        primary_gpu = found_gpus.join(" + ");
-    }
-
-    (primary_gpu, dedicated)
 }
 
 pub fn get_user_idle_ms() -> u32 {
@@ -387,4 +462,18 @@ pub fn get_user_idle_ms() -> u32 {
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_hardware_profile_real() {
+        let mut sys = System::new().expect("failed to initialize sysinfo");
+        let hw = HardwareProfile::detect(&mut sys);
+        assert!(!hw.gpu_name.is_empty());
+        assert!(!hw.gpu_driver_version.is_empty());
+        assert!(hw.ram_total_gb > 0.0);
+    }
 }

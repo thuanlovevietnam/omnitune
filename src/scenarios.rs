@@ -155,8 +155,8 @@ pub fn apply_scenario(
                 "Timer 15.6ms (Cần Pro để lên 1.0ms)"
             };
 
-            // 4. Real GPU & DirectX optimization (HAGS, GPU Priority 8, FSE, GameDVR off, PCIe ASPM 0)
-            let _ = crate::gpu::apply_scenario_gaming_gpu(hw, is_pro);
+            // 4. Real GPU & DirectX optimization (HAGS, GPU Priority 8, FSE, GameDVR off, PCIe ASPM 0, HighPerf GPU apps)
+            let _ = crate::gpu::apply_scenario_gaming_gpu(hw, is_pro, sys);
 
             // 5. Deprioritize cloud sync and background tools
             let deprioritized = prioritize_apps(
@@ -210,8 +210,11 @@ pub fn apply_scenario(
                 .creation_flags(CREATE_NO_WINDOW)
                 .status();
 
+            // Optimize GPU Capture for Camera & Screen share
+            let _ = crate::gpu::apply_scenario_office_gpu(hw, is_ac);
+
             format!(
-                "Đã bật kịch bản Họp & Văn phòng: Chống tắt màn hình, ưu tiên {} app họp/office, hạ {} app đồng bộ để giữ băng thông mượt mà, quạt êm chống ồn.",
+                "Đã bật kịch bản Họp & Văn phòng: Chống tắt màn hình, tối ưu GPU Capture, ưu tiên {} app họp/office, hạ {} app đồng bộ để giữ băng thông mượt mà, quạt êm chống ồn.",
                 boosted, deprioritized
             )
         }
@@ -243,8 +246,11 @@ pub fn apply_scenario(
                 .creation_flags(CREATE_NO_WINDOW)
                 .status();
 
+            // Optimize GPU Hardware Encoding for Remote Desktop (Terminal Services)
+            let _ = crate::gpu::apply_scenario_remote_gpu();
+
             format!(
-                "Đã bật kịch bản Remote Desktop: Chống Sleep/Lock, tối ưu mạng TCP, ưu tiên {} app remote, hạ {} app sync để giữ đường truyền ổn định.",
+                "Đã bật kịch bản Remote Desktop: Chống Sleep/Lock, kích hoạt GPU HW encoding, tối ưu mạng TCP, ưu tiên {} app remote, hạ {} app sync để giữ đường truyền ổn định.",
                 boosted, deprioritized
             )
         }
@@ -264,8 +270,11 @@ pub fn apply_scenario(
                 IDLE_PRIORITY_CLASS,
             );
 
+            // Tối ưu GPU Hardware Video Acceleration (DXVA, MMCSS Playback, Powercfg Video Bias)
+            let _ = crate::gpu::apply_scenario_media_gpu(hw, is_ac, sys);
+
             format!(
-                "Đã bật kịch bản Xem phim: Khóa giữ sáng màn hình, quạt êm 0dB, nhường giải mã video cho GPU [{}], hạ {} app ngầm.",
+                "Đã bật kịch bản Xem phim: Khóa giữ sáng màn hình, bật DXVA phần cứng GPU [{}], quạt êm 0dB, hạ {} app ngầm.",
                 hw.gpu_name, deprioritized
             )
         }
