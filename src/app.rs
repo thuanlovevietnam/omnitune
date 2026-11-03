@@ -318,6 +318,7 @@ pub struct OptimizerApp {
     // General status
     quick_opt_msg: String,
     last_refresh: Instant,
+    last_process_refresh: Instant,
     last_battery_poll: Instant,
 
     // Background hardware worker
@@ -1066,6 +1067,9 @@ impl OptimizerApp {
             cpu_cores_info: "Đang nhận diện...".to_string(),
             quick_opt_msg: String::new(),
             last_refresh: Instant::now(),
+            last_process_refresh: Instant::now()
+                .checked_sub(Duration::from_millis(1500))
+                .unwrap_or_else(Instant::now),
             last_battery_poll: Instant::now(),
             bg_tx,
             bg_rx,
@@ -1431,10 +1435,15 @@ impl OptimizerApp {
             }
         }
 
+        // Throttled process scanning loop (1.5s): keeps sys.processes() updated without UI micro-stutters
+        if self.initial_scan_done && self.last_process_refresh.elapsed() >= Duration::from_millis(1500) {
+            self.sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+            self.last_process_refresh = Instant::now();
+        }
+
         if self.last_refresh.elapsed() >= Duration::from_secs(1) {
             if self.initial_scan_done {
                 self.sys.refresh_cpu_usage();
-                self.sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
                 self.protection.cpu_usage = self.sys.global_cpu_usage();
                 self.foreground_info = get_foreground_process(&self.sys);
             }
