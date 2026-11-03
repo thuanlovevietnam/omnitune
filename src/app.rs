@@ -10,8 +10,8 @@ use crate::licensing::{
     save_license, start_trial, LicenseData, TrialStatus,
 };
 use crate::memory::{
-    get_memory_stats, get_top_processes, terminate_process, trim_single_process, trim_working_sets,
-    MemStats,
+    get_memory_stats, get_top_processes, purge_standby_list, terminate_process,
+    trim_single_process, trim_working_sets, MemStats,
 };
 use crate::power::{
     get_cooling_policy, get_gamedvr,
@@ -23,6 +23,7 @@ use crate::protection::{
     create_restore_point, disable_hibernate, enable_hibernate_as_admin, get_protection_overview, restore_windows_defaults,
     set_battery_threshold, ProtectionOverview,
 };
+use crate::scenarios::Scenario;
 use crate::startup::{get_startup_apps, is_telemetry_active, toggle_startup_item};
 use crate::theme::{
     apply_theme, configure_fonts, spacing, typography, ThemeMode, ThemePalette,
@@ -773,6 +774,8 @@ impl OptimizerApp {
         let run_on_startup = crate::config::is_autostart_enabled();
         config.run_on_startup = run_on_startup;
 
+        crate::power::init_keep_awake_timeouts(config.orig_power_timeouts);
+
         // Apply saved configurations immediately on launch (only if user customized settings)
         if config.user_customized {
             if config.timer_1ms_enabled && is_pro {
@@ -811,12 +814,8 @@ impl OptimizerApp {
             if config.win32_priority_boost {
                 crate::power::set_win32_priority_separation(true);
             }
-            if config.fast_shutdown_recovery {
-                crate::power::set_fast_shutdown_recovery(true);
-            }
-            if config.large_system_cache {
-                crate::power::set_large_system_cache(true);
-            }
+            crate::power::set_fast_shutdown_recovery(config.fast_shutdown_recovery);
+            crate::power::set_large_system_cache(config.large_system_cache);
             if config.memory_compression {
                 crate::power::set_memory_compression(true);
             }
@@ -968,6 +967,7 @@ impl OptimizerApp {
             config.auto_pilot_enabled,
             config.eco_qos_enabled,
             config.auto_ram_enabled,
+            config.is_manual_scenario,
             is_pro,
         );
 
@@ -987,8 +987,21 @@ impl OptimizerApp {
                 }
             }
             OperatingMode::WorkloadAdaptive => {
+                let scenario_to_apply = if config.is_manual_scenario {
+                    config.saved_scenario
+                } else {
+                    let idle_ms = crate::hardware_profile::get_user_idle_ms();
+                    crate::scenarios::detect_recommended_scenario(
+                        &sys,
+                        power_status.is_ac_online,
+                        power_status.battery_percent,
+                        idle_ms,
+                    )
+                    .unwrap_or(config.saved_scenario)
+                };
+                autonomous.current_scenario = scenario_to_apply;
                 let msg = crate::scenarios::apply_scenario(
-                    config.saved_scenario,
+                    scenario_to_apply,
                     &mut sys,
                     &hw,
                     power_status.is_ac_online,
@@ -999,7 +1012,7 @@ impl OptimizerApp {
                     "[KHÔI PHỤC]",
                     format!(
                         "Đã khôi phục Kịch bản Công việc [{}]: {}",
-                        config.saved_scenario.name(),
+                        scenario_to_apply.name(),
                         msg
                     ),
                 );
@@ -1101,6 +1114,7 @@ impl OptimizerApp {
     pub fn sync_config(&mut self) {
         self.config.timer_1ms_enabled = self.timer_1ms_enabled;
         self.config.keep_awake_mode = self.keep_awake_mode;
+        self.config.orig_power_timeouts = crate::power::get_saved_timeouts();
         self.config.cpu_limit_dc = self.cpu_limit_dc;
         self.config.cpu_limit_ac = self.cpu_limit_ac;
         self.config.cooling_active = self.cooling_active;
@@ -1108,6 +1122,7 @@ impl OptimizerApp {
         self.config.auto_pilot_enabled = self.autonomous.auto_pilot_enabled;
         self.config.operating_mode = self.autonomous.operating_mode;
         self.config.saved_scenario = self.autonomous.current_scenario;
+        self.config.is_manual_scenario = self.autonomous.is_manual_scenario;
         self.config.eco_qos_enabled = self.autonomous.eco_qos_enabled;
         self.config.auto_ram_enabled = self.autonomous.auto_ram_enabled;
         self.config.brightness_level = self.brightness_level;
@@ -1218,8 +1233,9 @@ impl OptimizerApp {
         let _ = crate::power::set_system_responsiveness(self.system_responsiveness_zero);
         let _ = crate::power::set_tcp_ecn(self.tcp_ecn_enabled);
 
-        // Nhóm 6: Nguồn điện, Pin & Tản nhiệt (4)
+        // Nhóm 6: Nguồn điện, Pin & Tản nhiệt (5)
         let _ = set_cooling_policy(self.cooling_active);
+        let _ = set_brightness(self.brightness_level);
         if is_pro {
             if self.protection.battery_support.kind == crate::battery_limiter::BatterySupportKind::Supported {
                 let _ = set_battery_threshold(self.protection.battery_threshold_enabled, 80);
@@ -1392,14 +1408,6 @@ impl OptimizerApp {
                                 self.cpu_limit_ac = ac;
                             }
                         }
-                        if let Some(cool) = res.cooling_active {
-                            if !self.config.cooling_active {
-                                self.cooling_active = cool;
-                            }
-                        }
-                        if !self.config.gamedvr_enabled {
-                            self.gamedvr_enabled = res.gamedvr_enabled;
-                        }
                     }
 
                     self.autonomous.log(
@@ -1509,20 +1517,24 @@ impl OptimizerApp {
     fn run_quick_optimize(&mut self) {
         // 1. Áp dụng toàn bộ thông số tối ưu phần cứng & Windows
         self.apply_all_criteria();
+
+        // 2. Duy trì chế độ hoạt động hiện tại (không ép cứng HardwareOptimal nếu người dùng đang ở WorkloadAdaptive)
+        let current_mode = self.autonomous.operating_mode;
         self.autonomous.set_operating_mode(
-            OperatingMode::HardwareOptimal,
+            current_mode,
             &mut self.sys,
             self.power_status.is_ac_online,
             self.power_status.battery_percent,
         );
+        self.sync_config();
 
-        // 2. Dọn dẹp tệp rác Tầng 1 an toàn
+        // 3. Dọn dẹp tệp rác Tầng 1 an toàn
         let (freed_junk, deleted_files) = self.clean_by_tier(CleanTier::Safe);
 
-        // 3. Thu hồi bộ nhớ Working Set RAM
+        // 4. Thu hồi bộ nhớ Working Set RAM
         let (freed_ram, count) = trim_working_sets(&mut self.sys);
 
-        // 4. Ưu tiên CPU app Focus và ép EcoQoS app ngầm
+        // 5. Ưu tiên CPU app Focus và ép EcoQoS app ngầm
         let (_, eco_count) = apply_foreground_boost_and_eco(
             &self.sys,
             self.foreground_info.as_ref().map(|(pid, _)| *pid),
@@ -1531,14 +1543,23 @@ impl OptimizerApp {
         self.mem_stats = get_memory_stats();
         self.top_processes = get_top_processes(&mut self.sys, 25);
 
+        let mode_desc = match current_mode {
+            OperatingMode::HardwareOptimal => format!(
+                "tối ưu phần cứng ({} nhân, SSD: {})",
+                self.autonomous.hardware_profile.cpu_logical_cores,
+                self.autonomous.hardware_profile.is_ssd
+            ),
+            OperatingMode::WorkloadAdaptive => {
+                format!("kịch bản [{}]", self.autonomous.current_scenario.name())
+            }
+        };
         let msg = format!(
-            "Dọn {} rác ({} tệp), thu hồi {} RAM ({} app), tối ưu phần cứng ({} nhân, SSD: {}), ép EcoQoS {} app nền.",
+            "Dọn {} rác ({} tệp), thu hồi {} RAM ({} app), duy trì {}, ép EcoQoS {} app nền.",
             format_bytes(freed_junk),
             deleted_files,
             format_bytes(freed_ram),
             count,
-            self.autonomous.hardware_profile.cpu_logical_cores,
-            self.autonomous.hardware_profile.is_ssd,
+            mode_desc,
             eco_count
         );
         self.quick_opt_msg = format!("✓ {}", msg);
@@ -1953,6 +1974,13 @@ impl OptimizerApp {
                             &mut self.autonomous.auto_pilot_enabled,
                             RichText::new("Auto-Pilot").size(13.5).strong().color(p.success_green),
                         ).changed() {
+                            if self.autonomous.auto_pilot_enabled {
+                                self.autonomous.clear_manual_scenario(
+                                    &mut self.sys,
+                                    self.power_status.is_ac_online,
+                                    self.power_status.battery_percent,
+                                );
+                            }
                             self.sync_config();
                         }
                         ui.add_space(8.0);
@@ -2048,6 +2076,11 @@ impl OptimizerApp {
                 });
             });
         });
+
+        ui.add_space(8.0);
+
+        // --- OPERATING MODE & SCENARIO CARD ---
+        self.render_operating_mode_control(ui);
 
         ui.add_space(8.0);
 
@@ -2219,6 +2252,214 @@ impl OptimizerApp {
             ui.add_space(12.0);
             self.render_partition_unified_view(ui, active);
         }
+    }
+
+    // =========================================================================
+    // ĐIỀU KHIỂN CHẾ ĐỘ VẬN HÀNH & KỊCH BẢN (OPERATING MODE & SCENARIOS)
+    // =========================================================================
+    fn render_operating_mode_control(&mut self, ui: &mut egui::Ui) {
+        let p = self.palette;
+        p.modern_card(ui, |ui| {
+            // Header: Tiêu đề + Badge trạng thái
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("⚙️ CHẾ ĐỘ VẬN HÀNH & KỊCH BẢN")
+                        .size(typography::SECTION_TITLE)
+                        .strong()
+                        .color(p.accent_blue),
+                );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    match self.autonomous.operating_mode {
+                        OperatingMode::HardwareOptimal => {
+                            ui.label(
+                                RichText::new("⚙️ Cố định phần cứng")
+                                    .size(typography::CHIP_TITLE)
+                                    .strong()
+                                    .color(p.accent_blue),
+                            );
+                        }
+                        OperatingMode::WorkloadAdaptive => {
+                            if self.autonomous.is_manual_scenario {
+                                ui.label(
+                                    RichText::new(format!("🔒 Thủ công: {}", self.autonomous.current_scenario.name()))
+                                        .size(typography::CHIP_TITLE)
+                                        .strong()
+                                        .color(p.warn_amber),
+                                );
+                            } else {
+                                ui.label(
+                                    RichText::new(format!("⚡ Tự động: {}", self.autonomous.current_scenario.name()))
+                                        .size(typography::CHIP_TITLE)
+                                        .strong()
+                                        .color(p.success_green),
+                                );
+                            }
+                        }
+                    }
+                });
+            });
+
+            ui.add_space(6.0);
+
+            // 2 nút chọn chế độ (Segmented mode switcher)
+            let is_adaptive = self.autonomous.operating_mode == OperatingMode::WorkloadAdaptive;
+            let is_hw = self.autonomous.operating_mode == OperatingMode::HardwareOptimal;
+
+            ui.columns(2, |cols| {
+                let adaptive_btn = egui::Button::new(
+                    RichText::new("⚡ Tự Động Theo Tác Vụ (Workload Adaptive)")
+                        .size(typography::BTN_NORMAL)
+                        .strong()
+                        .color(if is_adaptive { Color32::WHITE } else { p.text_primary }),
+                )
+                .fill(if is_adaptive { p.primary_btn } else { p.tab_inactive_bg })
+                .stroke(Stroke::new(1.0, if is_adaptive { p.primary_btn } else { p.card_border }))
+                .min_size(Vec2::new(cols[0].available_width(), 32.0))
+                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+
+                if cols[0].add(adaptive_btn).clicked() && !is_adaptive {
+                    self.autonomous.set_operating_mode(
+                        OperatingMode::WorkloadAdaptive,
+                        &mut self.sys,
+                        self.power_status.is_ac_online,
+                        self.power_status.battery_percent,
+                    );
+                    self.sync_config();
+                }
+
+                let hw_btn = egui::Button::new(
+                    RichText::new("⚙️ Hiệu Năng Cố Định (Hardware Optimal)")
+                        .size(typography::BTN_NORMAL)
+                        .strong()
+                        .color(if is_hw { Color32::WHITE } else { p.text_primary }),
+                )
+                .fill(if is_hw { p.primary_btn } else { p.tab_inactive_bg })
+                .stroke(Stroke::new(1.0, if is_hw { p.primary_btn } else { p.card_border }))
+                .min_size(Vec2::new(cols[1].available_width(), 32.0))
+                .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+
+                if cols[1].add(hw_btn).clicked() && !is_hw {
+                    self.autonomous.set_operating_mode(
+                        OperatingMode::HardwareOptimal,
+                        &mut self.sys,
+                        self.power_status.is_ac_online,
+                        self.power_status.battery_percent,
+                    );
+                    self.sync_config();
+                }
+            });
+
+            ui.add_space(8.0);
+
+            // Nội dung theo từng chế độ
+            match self.autonomous.operating_mode {
+                OperatingMode::WorkloadAdaptive => {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new("Kịch bản hoạt động:")
+                                .size(typography::BODY_TEXT)
+                                .strong()
+                                .color(p.text_primary),
+                        );
+
+                        let current_scen = self.autonomous.current_scenario;
+                        let combo_label = if self.autonomous.is_manual_scenario {
+                            format!("🔒 {}", current_scen.name())
+                        } else {
+                            format!("⚡ [Tự động] {}", current_scen.name())
+                        };
+
+                        egui::ComboBox::from_id_salt("widget_scenario_selector")
+                            .selected_text(
+                                RichText::new(combo_label)
+                                    .size(typography::BODY_TEXT)
+                                    .strong()
+                                    .color(if self.autonomous.is_manual_scenario { p.warn_amber } else { p.accent_blue })
+                            )
+                            .width(280.0)
+                            .show_ui(ui, |ui| {
+                                let is_auto_selected = !self.autonomous.is_manual_scenario;
+                                if ui.selectable_label(
+                                    is_auto_selected,
+                                    RichText::new("🔄 [Tự động nhận diện theo tác vụ (Auto-Pilot)]")
+                                        .color(p.success_green)
+                                        .strong()
+                                ).clicked() {
+                                    self.autonomous.clear_manual_scenario(
+                                        &mut self.sys,
+                                        self.power_status.is_ac_online,
+                                        self.power_status.battery_percent,
+                                    );
+                                    self.autonomous.auto_pilot_enabled = true;
+                                    self.sync_config();
+                                }
+
+                                ui.separator();
+
+                                for scen in Scenario::ALL {
+                                    let is_selected = self.autonomous.is_manual_scenario && current_scen == scen;
+                                    if ui.selectable_label(
+                                        is_selected,
+                                        RichText::new(scen.name()).color(p.text_primary),
+                                    ).clicked() {
+                                        self.autonomous.set_manual_scenario(
+                                            scen,
+                                            &mut self.sys,
+                                            self.power_status.is_ac_online,
+                                            self.power_status.battery_percent,
+                                        );
+                                        self.sync_config();
+                                    }
+                                }
+                            });
+
+                        if self.autonomous.is_manual_scenario {
+                            let revert_btn = egui::Button::new(
+                                RichText::new("↺ Trở về tự động")
+                                    .size(typography::CHIP_DESC)
+                                    .strong()
+                                    .color(p.success_green),
+                            )
+                            .fill(p.tab_inactive_bg)
+                            .stroke(Stroke::new(1.0, p.card_border))
+                            .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
+
+                            if ui.add(revert_btn).on_hover_text("Hủy chọn thủ công, quay lại tự động nhận diện theo ứng dụng đang mở").clicked() {
+                                self.autonomous.clear_manual_scenario(
+                                    &mut self.sys,
+                                    self.power_status.is_ac_online,
+                                    self.power_status.battery_percent,
+                                );
+                                self.autonomous.auto_pilot_enabled = true;
+                                self.sync_config();
+                            }
+                        }
+                    });
+
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(self.autonomous.current_scenario.description())
+                            .size(typography::CHIP_DESC)
+                            .color(p.text_secondary),
+                    );
+                }
+                OperatingMode::HardwareOptimal => {
+                    let desc = format!(
+                        "Chế độ cố định thông số tối ưu tĩnh theo cấu hình máy: {} nhân CPU ({}), {:.1} GB RAM, SSD: {}.",
+                        self.autonomous.hardware_profile.cpu_logical_cores,
+                        self.autonomous.hardware_profile.cpu_brand,
+                        self.autonomous.hardware_profile.ram_total_gb,
+                        self.autonomous.hardware_profile.is_ssd
+                    );
+                    ui.label(
+                        RichText::new(desc)
+                            .size(typography::CHIP_DESC)
+                            .color(p.text_secondary),
+                    );
+                }
+            }
+        });
     }
 
     // =========================================================================
@@ -3850,15 +4091,28 @@ impl OptimizerApp {
                 render_action_chip(
                     ui,
                     &p,
-                    "4. Ép giải phóng bộ nhớ đệm",
-                    "Xóa sạch Standby List và Working Set của mọi app chạy ngầm",
+                    "4. Thu hồi bộ nhớ làm việc sâu",
+                    "Thu hồi bộ nhớ làm việc sâu (Deep Working Set Trim) và dọn Standby List",
                     "Dọn sâu",
                     || {
                         if !self.check_pro_gate("Auto-RAM 24/7") {
                             return;
                         }
                         let (freed, count) = trim_working_sets(&mut self.sys);
-                        self.criteria_apply_msg = format!("✓ Đã dọn sâu {} từ {} tiến trình.", format_bytes(freed), count);
+                        let standby_purged = purge_standby_list();
+                        self.criteria_apply_msg = if standby_purged {
+                            format!(
+                                "✓ Đã thu hồi sâu {} từ {} tiến trình & làm sạch Standby List.",
+                                format_bytes(freed),
+                                count
+                            )
+                        } else {
+                            format!(
+                                "✓ Đã thu hồi sâu {} từ {} tiến trình.",
+                                format_bytes(freed),
+                                count
+                            )
+                        };
                     },
                 );
             },
@@ -4022,7 +4276,12 @@ impl OptimizerApp {
                             None,
                         ) {
                             self.protection.battery_threshold_enabled = false;
-                            self.criteria_apply_msg = format!("⚠ {}", support.status_message);
+                            if let Some(ref url) = support.download_url {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                                self.criteria_apply_msg = format!("Đang mở liên kết tải: {url}");
+                            } else {
+                                self.criteria_apply_msg = format!("⚠ {}", support.status_message);
+                            }
                         }
                     }
                     crate::battery_limiter::BatterySupportKind::NoBattery => {

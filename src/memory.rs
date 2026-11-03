@@ -1,14 +1,30 @@
 use crate::types::ProcessMemInfo;
 use sysinfo::System;
 use windows_sys::Win32::Foundation::CloseHandle;
+use windows_sys::Win32::Security::{
+    AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, TOKEN_ADJUST_PRIVILEGES,
+    TOKEN_PRIVILEGES, TOKEN_QUERY, SE_PRIVILEGE_ENABLED,
+};
 use windows_sys::Win32::System::ProcessStatus::{
     K32EmptyWorkingSet, K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
 };
 use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows_sys::Win32::System::Threading::{
-    OpenProcess, TerminateProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_QUOTA,
-    PROCESS_TERMINATE,
+    GetCurrentProcess, OpenProcess, OpenProcessToken, TerminateProcess, PROCESS_QUERY_INFORMATION,
+    PROCESS_SET_QUOTA, PROCESS_TERMINATE,
 };
+
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    fn NtSetSystemInformation(
+        system_information_class: u32,
+        system_information: *const std::ffi::c_void,
+        system_information_length: u32,
+    ) -> i32;
+}
+
+const SYSTEM_MEMORY_LIST_INFORMATION: u32 = 80;
+const MEMORY_PURGE_STANDBY_LIST: u32 = 4;
 
 #[derive(Debug, Clone, Default)]
 #[allow(dead_code)]
@@ -85,6 +101,68 @@ pub fn get_top_cpu_processes(sys: &mut System, limit: usize) -> Vec<ProcessMemIn
     list
 }
 
+/// Kích hoạt đặc quyền SeProfileSingleProcessPrivilege cần thiết để can thiệp Windows Memory Manager.
+fn enable_profile_privilege() -> bool {
+    unsafe {
+        let mut token = std::ptr::null_mut();
+        if OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+            &mut token,
+        ) == 0
+        {
+            return false;
+        }
+
+        let priv_name: Vec<u16> = "SeProfileSingleProcessPrivilege\0"
+            .encode_utf16()
+            .collect();
+        let mut luid = std::mem::zeroed();
+        if LookupPrivilegeValueW(std::ptr::null(), priv_name.as_ptr(), &mut luid) == 0 {
+            CloseHandle(token);
+            return false;
+        }
+
+        let tp = TOKEN_PRIVILEGES {
+            PrivilegeCount: 1,
+            Privileges: [LUID_AND_ATTRIBUTES {
+                Luid: luid,
+                Attributes: SE_PRIVILEGE_ENABLED,
+            }],
+        };
+
+        let res = AdjustTokenPrivileges(
+            token,
+            0,
+            &tp,
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+        CloseHandle(token);
+        res != 0
+    }
+}
+
+/// Dọn sạch Standby List về danh sách bộ nhớ trống (Free Memory List) qua NtSetSystemInformation.
+pub fn purge_standby_list() -> bool {
+    enable_profile_privilege();
+    let command: u32 = MEMORY_PURGE_STANDBY_LIST;
+    unsafe {
+        let status = NtSetSystemInformation(
+            SYSTEM_MEMORY_LIST_INFORMATION,
+            &command as *const u32 as *const std::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+        );
+        status >= 0
+    }
+}
+
+/// Thu hồi bộ nhớ làm việc (Working Set) của mọi tiến trình qua K32EmptyWorkingSet.
+///
+/// Cơ chế kỹ thuật: K32EmptyWorkingSet loại bỏ các trang nhớ không sử dụng ra khỏi Working Set
+/// và chuyển sang Standby List / Modified List; không xóa Standby List. Để xóa Standby List,
+/// hãy dùng kèm `purge_standby_list()`.
 pub fn trim_working_sets(sys: &mut System) -> (u64, usize) {
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 

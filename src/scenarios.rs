@@ -31,6 +31,17 @@ pub enum Scenario {
 
 #[allow(dead_code)]
 impl Scenario {
+    pub const ALL: [Scenario; 8] = [
+        Scenario::Default,
+        Scenario::Developer,
+        Scenario::Gaming,
+        Scenario::OfficeMeeting,
+        Scenario::RemoteDesktop,
+        Scenario::MediaChill,
+        Scenario::CafeMobility,
+        Scenario::IdlePowerSave,
+    ];
+
     pub fn name(&self) -> &'static str {
         match self {
             Scenario::Default => "[Cân bằng] Mặc định Windows",
@@ -493,11 +504,22 @@ mod tests {
 
     #[test]
     fn test_scenario_names() {
-        assert_eq!(Scenario::Gaming.name(), "Game & Đồ họa nặng");
-        assert_eq!(Scenario::Developer.name(), "Lập trình & Biên dịch");
-        assert_eq!(Scenario::OfficeMeeting.name(), "Văn phòng & Họp trực tuyến");
-        assert_eq!(Scenario::MediaChill.name(), "Xem phim & Nghe nhạc");
-        assert_eq!(Scenario::IdlePowerSave.name(), "Nghỉ ngơi & Tiết kiệm điện");
+        assert_eq!(Scenario::Default.name(), "[Cân bằng] Mặc định Windows");
+        assert_eq!(Scenario::Developer.name(), "[Dev] Lập trình & Biên dịch");
+        assert_eq!(Scenario::Gaming.name(), "[Gaming] Game & Đồ họa");
+        assert_eq!(Scenario::OfficeMeeting.name(), "[Văn phòng] Họp & Làm việc");
+        assert_eq!(Scenario::RemoteDesktop.name(), "[Remote] Điều khiển từ xa");
+        assert_eq!(Scenario::MediaChill.name(), "[Media] Xem phim & Thư giãn");
+        assert_eq!(Scenario::CafeMobility.name(), "[Pin] Di động / Tiết kiệm");
+        assert_eq!(Scenario::IdlePowerSave.name(), "[Nghỉ ngơi] Nhàn rỗi tự động");
+    }
+
+    #[test]
+    fn test_scenario_all() {
+        assert_eq!(Scenario::ALL.len(), 8);
+        assert_eq!(Scenario::ALL[0], Scenario::Default);
+        assert_eq!(Scenario::ALL[1], Scenario::Developer);
+        assert_eq!(Scenario::ALL[2], Scenario::Gaming);
     }
 
     #[test]

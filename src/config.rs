@@ -27,12 +27,22 @@ fn default_5() -> u32 {
     5
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PowerTimeouts {
+    pub standby_ac: u32,
+    pub standby_dc: u32,
+    pub monitor_ac: u32,
+    pub monitor_dc: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub user_customized: bool,
     pub timer_1ms_enabled: bool,
     pub keep_awake_mode: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orig_power_timeouts: Option<PowerTimeouts>,
     pub cpu_limit_dc: u32,
     pub cpu_limit_ac: u32,
     pub cooling_active: bool,
@@ -45,6 +55,8 @@ pub struct AppConfig {
     pub operating_mode: OperatingMode,
     #[serde(default)]
     pub saved_scenario: Scenario,
+    #[serde(default)]
+    pub is_manual_scenario: bool,
     #[serde(default = "default_true")]
     pub eco_qos_enabled: bool,
     #[serde(default = "default_true")]
@@ -67,11 +79,11 @@ pub struct AppConfig {
     pub cpu_min_state_pct: u32,
     #[serde(default = "default_true")]
     pub win32_priority_boost: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub fast_shutdown_recovery: bool,
 
     // Nhóm 2: RAM & Cache
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub large_system_cache: bool,
     #[serde(default = "default_true")]
     pub memory_compression: bool,
@@ -111,6 +123,7 @@ impl Default for AppConfig {
             user_customized: false,
             timer_1ms_enabled: false,
             keep_awake_mode: 0,
+            orig_power_timeouts: None,
             cpu_limit_dc: 80,
             cpu_limit_ac: 100,
             cooling_active: false,
@@ -121,6 +134,7 @@ impl Default for AppConfig {
             run_on_startup: false,
             operating_mode: OperatingMode::WorkloadAdaptive,
             saved_scenario: Scenario::Default,
+            is_manual_scenario: false,
             eco_qos_enabled: true,
             auto_ram_enabled: true,
             brightness_level: 80,
@@ -132,8 +146,8 @@ impl Default for AppConfig {
 
             cpu_min_state_pct: 5,
             win32_priority_boost: true,
-            fast_shutdown_recovery: true,
-            large_system_cache: true,
+            fast_shutdown_recovery: false,
+            large_system_cache: false,
             memory_compression: true,
             disable_8dot3_name: true,
             trim_enabled: true,
@@ -161,7 +175,11 @@ pub fn get_config_path() -> PathBuf {
 pub fn load_config() -> AppConfig {
     let path = get_config_path();
     if let Ok(data) = std::fs::read_to_string(&path) {
-        if let Ok(cfg) = serde_json::from_str::<AppConfig>(&data) {
+        if let Ok(mut cfg) = serde_json::from_str::<AppConfig>(&data) {
+            if !cfg.user_customized {
+                cfg.large_system_cache = false;
+                cfg.fast_shutdown_recovery = false;
+            }
             return cfg;
         }
     }

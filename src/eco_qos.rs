@@ -1,4 +1,6 @@
-use sysinfo::System;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
+use sysinfo::{Pid, System};
 use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, SetPriorityClass, SetProcessAffinityMask,
@@ -8,6 +10,28 @@ use windows_sys::Win32::System::Threading::{
     ProcessPowerThrottling,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+pub const ECO_CANDIDATES: &[&str] = &[
+    "googledrivefs",
+    "onedrive",
+    "searchindexer",
+    "tailscale",
+    "dropbox",
+];
+
+const GENERIC_HOSTS: &[&str] = &[
+    "svchost.exe",
+    "cmd.exe",
+    "powershell.exe",
+    "pwsh.exe",
+    "conhost.exe",
+    "dllhost.exe",
+    "rundll32.exe",
+    "taskhostw.exe",
+    "wsmprovhost.exe",
+    "runtimebroker.exe",
+    "explorer.exe",
+];
 
 fn get_process_name_win32(pid: u32) -> Option<String> {
     unsafe {
@@ -30,6 +54,148 @@ fn get_process_name_win32(pid: u32) -> Option<String> {
             None
         }
     }
+}
+
+fn get_process_exe_path_win32(pid: u32) -> Option<PathBuf> {
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let mut buf = [0u16; 1024];
+        let mut size = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut size);
+        CloseHandle(handle);
+
+        if ok != 0 && size > 0 {
+            Some(PathBuf::from(String::from_utf16_lossy(&buf[..size as usize])))
+        } else {
+            None
+        }
+    }
+}
+
+pub fn find_focus_family_pids(sys: &System, fg_pid: u32) -> HashSet<u32> {
+    let mut family = HashSet::new();
+    let my_pid = std::process::id();
+
+    if fg_pid <= 4 || fg_pid == my_pid {
+        return family;
+    }
+    family.insert(fg_pid);
+
+    let fg_sys_pid = Pid::from_u32(fg_pid);
+    let fg_proc = sys.process(fg_sys_pid);
+
+    let fg_name = fg_proc
+        .map(|p| p.name().to_string_lossy().to_string())
+        .or_else(|| get_process_name_win32(fg_pid));
+    let fg_exe = fg_proc
+        .and_then(|p| p.exe().map(|e| e.to_path_buf()))
+        .or_else(|| get_process_exe_path_win32(fg_pid));
+
+    let fg_name_lower = fg_name.as_ref().map(|n| n.to_lowercase());
+
+    let is_generic = fg_name_lower
+        .as_ref()
+        .map(|n| {
+            GENERIC_HOSTS.iter().any(|&g| {
+                n == g || n == g.trim_end_matches(".exe")
+            })
+        })
+        .unwrap_or(false);
+
+    // 1. Leo ngược cây tìm Ancestors cùng executable
+    let mut curr_pid = fg_sys_pid;
+    let mut visited_ancestors = HashSet::new();
+    visited_ancestors.insert(fg_pid);
+
+    for _ in 0..16 {
+        let Some(p_proc) = sys.process(curr_pid) else { break; };
+        let Some(parent_sys_pid) = p_proc.parent() else { break; };
+        let p_raw = parent_sys_pid.as_u32();
+
+        if p_raw <= 4 || p_raw == my_pid || !visited_ancestors.insert(p_raw) {
+            break;
+        }
+
+        let Some(parent_proc) = sys.process(parent_sys_pid) else { break; };
+        let parent_name = parent_proc.name().to_string_lossy().to_lowercase();
+
+        if parent_name == "explorer.exe"
+            || parent_name == "services.exe"
+            || parent_name == "winlogon.exe"
+        {
+            break;
+        }
+
+        let is_same = if let Some(ref target_n) = fg_name_lower {
+            parent_name == *target_n
+                || parent_name.trim_end_matches(".exe") == target_n.trim_end_matches(".exe")
+        } else {
+            false
+        };
+
+        if is_same {
+            family.insert(p_raw);
+            curr_pid = parent_sys_pid;
+        } else {
+            break;
+        }
+    }
+
+    // 2. Duyệt 1 vòng gom process cùng exe và dựng sơ đồ quan hệ cha - con
+    let mut children_map: HashMap<u32, Vec<u32>> = HashMap::new();
+
+    for (&p_pid, proc) in sys.processes() {
+        let raw = p_pid.as_u32();
+        if raw <= 4 || raw == my_pid {
+            continue;
+        }
+
+        if let Some(parent) = proc.parent() {
+            let p_raw = parent.as_u32();
+            if p_raw > 4 && p_raw != my_pid {
+                children_map.entry(p_raw).or_default().push(raw);
+            }
+        }
+
+        if !is_generic {
+            let matches_exe = match (&fg_exe, proc.exe()) {
+                (Some(target_path), Some(p_path)) => target_path == p_path,
+                _ => match (&fg_name_lower, proc.name().to_str()) {
+                    (Some(target_n), Some(pn)) => {
+                        let pn_clean = pn.to_lowercase();
+                        let t_clean = target_n.to_lowercase();
+                        pn_clean == t_clean
+                            || pn_clean.trim_end_matches(".exe")
+                                == t_clean.trim_end_matches(".exe")
+                    }
+                    _ => false,
+                },
+            };
+            if matches_exe {
+                family.insert(raw);
+            }
+        }
+    }
+
+    // 3. BFS mở rộng toàn bộ con cháu (descendants)
+    let mut queue: VecDeque<u32> = family.iter().copied().collect();
+    while let Some(current) = queue.pop_front() {
+        if let Some(children) = children_map.get(&current) {
+            for &child in children {
+                if family.insert(child) {
+                    queue.push_back(child);
+                }
+            }
+        }
+    }
+
+    family.remove(&0);
+    family.remove(&4);
+    family.remove(&my_pid);
+    family
 }
 
 pub fn get_foreground_process(sys: &System) -> Option<(u32, String)> {
@@ -92,48 +258,43 @@ pub fn apply_foreground_boost_and_eco(
 ) -> (usize, usize) {
     let mut boosted = 0;
     let mut eco_throttled = 0;
+    let my_pid = std::process::id();
 
-    // 1. Boost active foreground process
-    if let Some(pid) = fg_pid {
-        if pid > 4 {
-            unsafe {
-                let handle = OpenProcess(PROCESS_SET_INFORMATION, 0, pid);
-                if !handle.is_null() {
-                    let _ = SetPriorityClass(handle, ABOVE_NORMAL_PRIORITY_CLASS);
-                    CloseHandle(handle);
-                }
+    let focus_family = if let Some(pid) = fg_pid {
+        find_focus_family_pids(sys, pid)
+    } else {
+        HashSet::new()
+    };
+
+    // 1. Boost active foreground process and its family (un-throttle and prioritize)
+    for &pid in &focus_family {
+        if pid <= 4 || pid == my_pid {
+            continue;
+        }
+        unsafe {
+            let handle = OpenProcess(PROCESS_SET_INFORMATION, 0, pid);
+            if !handle.is_null() {
+                let _ = SetPriorityClass(handle, ABOVE_NORMAL_PRIORITY_CLASS);
+                CloseHandle(handle);
             }
-            if set_process_eco_mode(pid, false) {
-                boosted += 1;
-            }
+        }
+        if set_process_eco_mode(pid, false) {
+            boosted += 1;
         }
     }
 
-    // 2. Target heavy background candidate names for EcoQoS
-    let eco_candidates = [
-        "googledrivefs",
-        "onedrive",
-        "searchindexer",
-        "tailscale",
-        "msedge",
-        "chrome",
-        "brave",
-    ];
-
-    let my_pid = std::process::id();
+    // 2. Target heavy background candidate names for EcoQoS (excluding focus family)
     for (&pid, proc) in sys.processes() {
         let raw_pid = pid.as_u32();
-        if Some(raw_pid) == fg_pid || raw_pid <= 4 || raw_pid == my_pid {
+        if raw_pid <= 4 || raw_pid == my_pid || focus_family.contains(&raw_pid) {
             continue;
         }
 
         let name = proc.name().to_string_lossy().to_lowercase();
-        let should_eco = eco_candidates.iter().any(|&c| name.contains(c));
+        let should_eco = ECO_CANDIDATES.iter().any(|&c| name.contains(c));
 
-        if should_eco {
-            if set_process_eco_mode(raw_pid, true) {
-                eco_throttled += 1;
-            }
+        if should_eco && set_process_eco_mode(raw_pid, true) {
+            eco_throttled += 1;
         }
     }
 
@@ -165,5 +326,42 @@ pub fn apply_pro_foreground_boost(pid: u32, total_cores: usize) -> bool {
 
         CloseHandle(handle);
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_eco_candidates_no_browsers() {
+        let forbidden = ["chrome", "msedge", "brave", "firefox", "opera", "coccoc"];
+        for b in forbidden {
+            assert!(
+                !ECO_CANDIDATES.contains(&b),
+                "Candidate list must not contain browser: {}",
+                b
+            );
+        }
+    }
+
+    #[test]
+    fn test_find_focus_family_system_pids() {
+        let sys = System::new().expect("failed to initialize sysinfo");
+        let family_0 = find_focus_family_pids(&sys, 0);
+        let family_4 = find_focus_family_pids(&sys, 4);
+        assert!(family_0.is_empty());
+        assert!(family_4.is_empty());
+    }
+
+    #[test]
+    fn test_find_focus_family_excludes_self() {
+        let mut sys = System::new().expect("failed to initialize sysinfo");
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        let my_pid = std::process::id();
+        let family = find_focus_family_pids(&sys, my_pid);
+        assert!(!family.contains(&0));
+        assert!(!family.contains(&4));
+        assert!(!family.contains(&my_pid));
     }
 }

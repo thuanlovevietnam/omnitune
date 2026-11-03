@@ -1,5 +1,7 @@
 use std::os::windows::process::CommandExt;
 use std::process::Command;
+use std::sync::Mutex;
+use crate::config::PowerTimeouts;
 use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -374,7 +376,7 @@ pub fn set_timer_resolution_1ms(enable: bool) {
     // Giữ hiệu lực 100% vĩnh viễn trên Windows kể cả khi tắt hoàn toàn app!
     if enable {
         let _ = Command::new("bcdedit").args(["/set", "disabledynamictick", "yes"]).creation_flags(CREATE_NO_WINDOW).status();
-        let _ = Command::new("bcdedit").args(["/set", "useplatformtick", "yes"]).creation_flags(CREATE_NO_WINDOW).status();
+        let _ = Command::new("bcdedit").args(["/deletevalue", "useplatformtick"]).creation_flags(CREATE_NO_WINDOW).status();
     } else {
         let _ = Command::new("bcdedit").args(["/deletevalue", "disabledynamictick"]).creation_flags(CREATE_NO_WINDOW).status();
         let _ = Command::new("bcdedit").args(["/deletevalue", "useplatformtick"]).creation_flags(CREATE_NO_WINDOW).status();
@@ -391,6 +393,45 @@ pub fn set_timer_resolution_1ms(enable: bool) {
         crate::reg::reg_set_u32(HKEY_LOCAL_MACHINE, tasks_games_key, "Priority", 2);
         crate::reg::reg_set_string(HKEY_LOCAL_MACHINE, tasks_games_key, "Scheduling Category", "Medium");
     }
+}
+
+static SAVED_TIMEOUTS: Mutex<Option<PowerTimeouts>> = Mutex::new(None);
+
+pub fn init_keep_awake_timeouts(saved: Option<PowerTimeouts>) {
+    if let Ok(mut lock) = SAVED_TIMEOUTS.lock() {
+        if saved.is_some() {
+            *lock = saved;
+        }
+    }
+}
+
+pub fn get_saved_timeouts() -> Option<PowerTimeouts> {
+    if let Ok(lock) = SAVED_TIMEOUTS.lock() {
+        *lock
+    } else {
+        None
+    }
+}
+
+pub fn read_current_power_timeouts() -> Option<PowerTimeouts> {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    let schemes_key = r"SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes";
+    let active_scheme = crate::reg::reg_read_string(HKEY_LOCAL_MACHINE, schemes_key, "ActivePowerScheme")?;
+
+    let sleep_sub = format!(r"{}\{}\238c9fa8-0aad-41ed-83f4-97be242c8f20\29f6c1db-86da-48c5-9fdb-f2b67b1f44da", schemes_key, active_scheme);
+    let video_sub = format!(r"{}\{}\7516b95f-f776-4464-8c53-06167f40cc99\3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e", schemes_key, active_scheme);
+
+    let standby_ac = crate::reg::reg_read_u32(HKEY_LOCAL_MACHINE, &sleep_sub, "ACSettingIndex").unwrap_or(1800) / 60;
+    let standby_dc = crate::reg::reg_read_u32(HKEY_LOCAL_MACHINE, &sleep_sub, "DCSettingIndex").unwrap_or(900) / 60;
+    let monitor_ac = crate::reg::reg_read_u32(HKEY_LOCAL_MACHINE, &video_sub, "ACSettingIndex").unwrap_or(900) / 60;
+    let monitor_dc = crate::reg::reg_read_u32(HKEY_LOCAL_MACHINE, &video_sub, "DCSettingIndex").unwrap_or(300) / 60;
+
+    Some(PowerTimeouts {
+        standby_ac,
+        standby_dc,
+        monitor_ac,
+        monitor_dc,
+    })
 }
 
 pub fn set_keep_awake(mode: u8) {
@@ -417,20 +458,37 @@ pub fn set_keep_awake(mode: u8) {
         }
     }
 
-    // Ghi vĩnh viễn vào Windows Power Timeout: Tắt app Windows vẫn không sleep!
-    if mode == 2 {
-        let _ = Command::new("powercfg").args(["/change", "standby-timeout-ac", "0"]).creation_flags(CREATE_NO_WINDOW).status();
-        let _ = Command::new("powercfg").args(["/change", "standby-timeout-dc", "0"]).creation_flags(CREATE_NO_WINDOW).status();
-        let _ = Command::new("powercfg").args(["/change", "monitor-timeout-ac", "0"]).creation_flags(CREATE_NO_WINDOW).status();
-    } else if mode == 1 {
-        let _ = Command::new("powercfg").args(["/change", "standby-timeout-ac", "0"]).creation_flags(CREATE_NO_WINDOW).status();
-        let _ = Command::new("powercfg").args(["/change", "standby-timeout-dc", "0"]).creation_flags(CREATE_NO_WINDOW).status();
-        let _ = Command::new("powercfg").args(["/change", "monitor-timeout-ac", "15"]).creation_flags(CREATE_NO_WINDOW).status();
+    if mode == 1 || mode == 2 {
+        if let Ok(mut lock) = SAVED_TIMEOUTS.lock() {
+            if lock.is_none() {
+                if let Some(current) = read_current_power_timeouts() {
+                    *lock = Some(current);
+                }
+            }
+        }
+
+        if mode == 2 {
+            let _ = Command::new("powercfg").args(["/change", "standby-timeout-ac", "0"]).creation_flags(CREATE_NO_WINDOW).status();
+            let _ = Command::new("powercfg").args(["/change", "standby-timeout-dc", "0"]).creation_flags(CREATE_NO_WINDOW).status();
+            let _ = Command::new("powercfg").args(["/change", "monitor-timeout-ac", "0"]).creation_flags(CREATE_NO_WINDOW).status();
+        } else {
+            let _ = Command::new("powercfg").args(["/change", "standby-timeout-ac", "0"]).creation_flags(CREATE_NO_WINDOW).status();
+            let _ = Command::new("powercfg").args(["/change", "standby-timeout-dc", "0"]).creation_flags(CREATE_NO_WINDOW).status();
+            let _ = Command::new("powercfg").args(["/change", "monitor-timeout-ac", "15"]).creation_flags(CREATE_NO_WINDOW).status();
+        }
     } else {
-        let _ = Command::new("powercfg").args(["/change", "standby-timeout-ac", "30"]).creation_flags(CREATE_NO_WINDOW).status();
-        let _ = Command::new("powercfg").args(["/change", "standby-timeout-dc", "15"]).creation_flags(CREATE_NO_WINDOW).status();
-        let _ = Command::new("powercfg").args(["/change", "monitor-timeout-ac", "15"]).creation_flags(CREATE_NO_WINDOW).status();
-        let _ = Command::new("powercfg").args(["/change", "monitor-timeout-dc", "5"]).creation_flags(CREATE_NO_WINDOW).status();
+        let orig = if let Ok(mut lock) = SAVED_TIMEOUTS.lock() {
+            lock.take()
+        } else {
+            None
+        };
+
+        if let Some(orig) = orig {
+            let _ = Command::new("powercfg").args(["/change", "standby-timeout-ac", &orig.standby_ac.to_string()]).creation_flags(CREATE_NO_WINDOW).status();
+            let _ = Command::new("powercfg").args(["/change", "standby-timeout-dc", &orig.standby_dc.to_string()]).creation_flags(CREATE_NO_WINDOW).status();
+            let _ = Command::new("powercfg").args(["/change", "monitor-timeout-ac", &orig.monitor_ac.to_string()]).creation_flags(CREATE_NO_WINDOW).status();
+            let _ = Command::new("powercfg").args(["/change", "monitor-timeout-dc", &orig.monitor_dc.to_string()]).creation_flags(CREATE_NO_WINDOW).status();
+        }
     }
 }
 
@@ -467,31 +525,15 @@ pub fn apply_permanent_windows_system_tweaks() {
         0,
     );
 
-    // 4. Fast App Shutdown & Hang Recovery
-    crate::reg::reg_set_string(
-        HKEY_CURRENT_USER,
-        r"Control Panel\Desktop",
-        "AutoEndTasks",
-        "1",
-    );
-    crate::reg::reg_set_string(
-        HKEY_CURRENT_USER,
-        r"Control Panel\Desktop",
-        "WaitToKillAppTimeout",
-        "2000",
-    );
-    crate::reg::reg_set_string(
-        HKEY_CURRENT_USER,
-        r"Control Panel\Desktop",
-        "HungAppTimeout",
-        "1000",
-    );
-    crate::reg::reg_set_string(
-        HKEY_LOCAL_MACHINE,
-        r"SYSTEM\CurrentControlSet\Control",
-        "WaitToKillServiceTimeout",
-        "2000",
-    );
+    // 4. Cleanup potentially destructive bcdedit useplatformtick & useplatformclock
+    let _ = Command::new("bcdedit")
+        .args(["/deletevalue", "useplatformtick"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("bcdedit")
+        .args(["/deletevalue", "useplatformclock"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
 }
 
 pub fn set_tcp_optimization(enable: bool) -> bool {

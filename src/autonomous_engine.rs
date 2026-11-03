@@ -52,6 +52,7 @@ pub fn get_current_time_str() -> String {
 pub struct AutonomousEngine {
     pub activity_log: Vec<ActivityEvent>,
     pub current_scenario: Scenario,
+    pub is_manual_scenario: bool,
     pub last_power_ac: Option<bool>,
     pub last_foreground_pid: Option<u32>,
     pub auto_pilot_enabled: bool,
@@ -71,11 +72,13 @@ impl AutonomousEngine {
         auto_pilot_enabled: bool,
         eco_qos_enabled: bool,
         auto_ram_enabled: bool,
+        is_manual_scenario: bool,
         is_pro: bool,
     ) -> Self {
         let mut engine = Self {
             activity_log: Vec::new(),
             current_scenario: saved_scenario,
+            is_manual_scenario,
             last_power_ac: None,
             last_foreground_pid: None,
             auto_pilot_enabled,
@@ -137,8 +140,16 @@ impl AutonomousEngine {
                 }
             }
             OperatingMode::WorkloadAdaptive => {
-                let idle_ms = get_user_idle_ms();
-                if let Some(target_scen) = detect_recommended_scenario(sys, is_ac, battery_pct, idle_ms) {
+                if self.is_manual_scenario {
+                    let msg = apply_scenario(self.current_scenario, sys, &self.hardware_profile, is_ac, battery_pct, self.is_pro);
+                    self.log(
+                        "[KỊCH BẢN]",
+                        format!("Duy trì kịch bản thủ công [{}]: {}", self.current_scenario.name(), msg),
+                    );
+                } else {
+                    let idle_ms = get_user_idle_ms();
+                    let target_scen = detect_recommended_scenario(sys, is_ac, battery_pct, idle_ms)
+                        .unwrap_or(self.current_scenario);
                     self.current_scenario = target_scen;
                     let msg = apply_scenario(target_scen, sys, &self.hardware_profile, is_ac, battery_pct, self.is_pro);
                     self.log(
@@ -150,7 +161,6 @@ impl AutonomousEngine {
         }
     }
 
-    #[allow(dead_code)]
     pub fn set_manual_scenario(
         &mut self,
         scenario: Scenario,
@@ -158,11 +168,30 @@ impl AutonomousEngine {
         is_ac: bool,
         battery_pct: u8,
     ) {
+        self.is_manual_scenario = true;
         self.current_scenario = scenario;
         let msg = apply_scenario(scenario, sys, &self.hardware_profile, is_ac, battery_pct, self.is_pro);
         self.log(
-            "[CHỌN]",
+            "[CHỌN THỦ CÔNG]",
             format!("Người dùng chọn kịch bản [{}]: {}", scenario.name(), msg),
+        );
+    }
+
+    pub fn clear_manual_scenario(
+        &mut self,
+        sys: &mut System,
+        is_ac: bool,
+        battery_pct: u8,
+    ) {
+        self.is_manual_scenario = false;
+        let idle_ms = get_user_idle_ms();
+        let target_scen = detect_recommended_scenario(sys, is_ac, battery_pct, idle_ms)
+            .unwrap_or(Scenario::Default);
+        self.current_scenario = target_scen;
+        let msg = apply_scenario(target_scen, sys, &self.hardware_profile, is_ac, battery_pct, self.is_pro);
+        self.log(
+            "[TỰ ĐỘNG]",
+            format!("Khôi phục tự động nhận diện -> [{}]: {}", target_scen.name(), msg),
         );
     }
 
@@ -185,6 +214,19 @@ impl AutonomousEngine {
                     for m in msgs {
                         self.log("[NGUỒN]", m);
                     }
+                } else if self.is_manual_scenario {
+                    let msg = apply_scenario(
+                        self.current_scenario,
+                        sys,
+                        &self.hardware_profile,
+                        is_ac,
+                        battery_pct,
+                        self.is_pro,
+                    );
+                    self.log(
+                        "[NGUỒN]",
+                        format!("Nguồn thay đổi (AC: {}, Pin: {}%) -> Duy trì kịch bản thủ công [{}]: {}", is_ac, battery_pct, self.current_scenario.name(), msg),
+                    );
                 } else {
                     // WorkloadAdaptive mode on AC/DC change
                     if !is_ac {
@@ -255,8 +297,11 @@ impl AutonomousEngine {
                 }
             }
 
-            // Tự động nhận diện theo chế độ làm việc (chỉ khi đang ở chế độ WorkloadAdaptive và auto_pilot_enabled)
-            if self.operating_mode == OperatingMode::WorkloadAdaptive && self.auto_pilot_enabled {
+            // Tự động nhận diện theo chế độ làm việc (chỉ khi đang ở chế độ WorkloadAdaptive, auto_pilot_enabled và không khóa thủ công)
+            if self.operating_mode == OperatingMode::WorkloadAdaptive
+                && self.auto_pilot_enabled
+                && !self.is_manual_scenario
+            {
                 if let Some(target_scen) = detect_recommended_scenario(sys, is_ac, battery_pct, idle_ms) {
                     if target_scen != self.current_scenario {
                         self.current_scenario = target_scen;
@@ -278,6 +323,7 @@ impl AutonomousEngine {
         // Kiểm tra nhàn rỗi (Idle) định kỳ trong chế độ tự động
         if self.operating_mode == OperatingMode::WorkloadAdaptive
             && self.auto_pilot_enabled
+            && !self.is_manual_scenario
             && idle_ms >= 300_000
             && self.current_scenario != Scenario::IdlePowerSave
         {
@@ -319,5 +365,84 @@ impl AutonomousEngine {
         }
 
         state_changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_engine(mode: OperatingMode, manual: bool) -> (AutonomousEngine, System) {
+        let mut sys = System::new().unwrap();
+        let hw = HardwareProfile::detect(&mut sys);
+        let engine = AutonomousEngine::new(
+            hw,
+            mode,
+            Scenario::Default,
+            true,  // auto_pilot_enabled
+            true,  // eco_qos_enabled
+            true,  // auto_ram_enabled
+            manual,
+            false, // is_pro
+        );
+        (engine, sys)
+    }
+
+    #[test]
+    fn test_operating_mode_switching() {
+        let (mut engine, mut sys) = create_test_engine(OperatingMode::WorkloadAdaptive, false);
+        assert_eq!(engine.operating_mode, OperatingMode::WorkloadAdaptive);
+        assert!(!engine.is_manual_scenario);
+
+        // Switch to HardwareOptimal
+        engine.set_operating_mode(OperatingMode::HardwareOptimal, &mut sys, true, 100);
+        assert_eq!(engine.operating_mode, OperatingMode::HardwareOptimal);
+
+        // Switch back to WorkloadAdaptive
+        engine.set_operating_mode(OperatingMode::WorkloadAdaptive, &mut sys, true, 100);
+        assert_eq!(engine.operating_mode, OperatingMode::WorkloadAdaptive);
+    }
+
+    #[test]
+    fn test_manual_scenario_lock_and_clear() {
+        let (mut engine, mut sys) = create_test_engine(OperatingMode::WorkloadAdaptive, false);
+
+        // User chooses manual Gaming scenario
+        engine.set_manual_scenario(Scenario::Gaming, &mut sys, true, 100);
+        assert!(engine.is_manual_scenario);
+        assert_eq!(engine.current_scenario, Scenario::Gaming);
+
+        // Simulate AC unplugging: manual scenario MUST NOT be overridden by CafeMobility
+        engine.last_power_ac = Some(true);
+        engine.tick(&mut sys, false, 80, 50);
+        assert_eq!(engine.current_scenario, Scenario::Gaming);
+        assert!(engine.is_manual_scenario);
+
+        // Clear manual override
+        engine.clear_manual_scenario(&mut sys, true, 100);
+        assert!(!engine.is_manual_scenario);
+    }
+
+    #[test]
+    fn test_scenario_logs_for_game_ide_meeting() {
+        let (mut engine, mut sys) = create_test_engine(OperatingMode::WorkloadAdaptive, false);
+
+        // 1. Gaming
+        engine.set_manual_scenario(Scenario::Gaming, &mut sys, true, 100);
+        assert!(engine.activity_log.iter().any(|ev| {
+            ev.icon == "[CHỌN THỦ CÔNG]" && ev.message.contains("[Gaming] Game & Đồ họa")
+        }));
+
+        // 2. IDE / Developer
+        engine.set_manual_scenario(Scenario::Developer, &mut sys, true, 100);
+        assert!(engine.activity_log.iter().any(|ev| {
+            ev.icon == "[CHỌN THỦ CÔNG]" && ev.message.contains("[Dev] Lập trình & Biên dịch")
+        }));
+
+        // 3. Meeting / Office
+        engine.set_manual_scenario(Scenario::OfficeMeeting, &mut sys, true, 100);
+        assert!(engine.activity_log.iter().any(|ev| {
+            ev.icon == "[CHỌN THỦ CÔNG]" && ev.message.contains("[Văn phòng] Họp & Làm việc")
+        }));
     }
 }
