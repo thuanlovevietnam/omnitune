@@ -21,23 +21,49 @@ pub fn reg_read_string(root: HKEY, subkey: &str, value_name: &str) -> Option<Str
         }
 
         let val_w = to_wide(value_name);
-        let mut buf = [0u8; 512];
-        let mut buf_len = buf.len() as u32;
+        let mut buf = [0u16; 256];
+        let mut buf_len = (buf.len() * std::mem::size_of::<u16>()) as u32;
         let mut val_type = 0u32;
-        let res = RegQueryValueExW(
+        let mut res = RegQueryValueExW(
             hkey,
             val_w.as_ptr(),
             std::ptr::null_mut(),
             &mut val_type,
-            buf.as_mut_ptr(),
+            buf.as_mut_ptr() as *mut u8,
             &mut buf_len,
         );
+
+        if res == 234 && buf_len > 0 {
+            // ERROR_MORE_DATA: Fallback cấp phát động nếu chuỗi > 256 ký tự
+            let u16_needed = (buf_len as usize + 1) / 2;
+            let mut dyn_buf = vec![0u16; u16_needed];
+            let mut dyn_len = (dyn_buf.len() * std::mem::size_of::<u16>()) as u32;
+            res = RegQueryValueExW(
+                hkey,
+                val_w.as_ptr(),
+                std::ptr::null_mut(),
+                &mut val_type,
+                dyn_buf.as_mut_ptr() as *mut u8,
+                &mut dyn_len,
+            );
+            RegCloseKey(hkey);
+
+            if res == 0 && (val_type == REG_SZ || val_type == REG_EXPAND_SZ) && dyn_len >= 2 {
+                let u16_len = (dyn_len as usize) / 2;
+                let s = String::from_utf16_lossy(&dyn_buf[..u16_len]);
+                let trimmed = s.trim_end_matches('\0').trim().to_string();
+                if !trimmed.is_empty() {
+                    return Some(trimmed);
+                }
+            }
+            return None;
+        }
+
         RegCloseKey(hkey);
 
         if res == 0 && (val_type == REG_SZ || val_type == REG_EXPAND_SZ) && buf_len >= 2 {
             let u16_len = (buf_len as usize) / 2;
-            let u16_slice = std::slice::from_raw_parts(buf.as_ptr() as *const u16, u16_len);
-            let s = String::from_utf16_lossy(u16_slice);
+            let s = String::from_utf16_lossy(&buf[..u16_len]);
             let trimmed = s.trim_end_matches('\0').trim().to_string();
             if !trimmed.is_empty() {
                 return Some(trimmed);
@@ -427,8 +453,8 @@ fn enumerate_run_key(root: HKEY, subkey: &str, loc_label: &str, apps: &mut Vec<S
             let mut name_buf = [0u16; 256];
             let mut name_len = name_buf.len() as u32;
             let mut val_type = 0u32;
-            let mut data_buf = [0u8; 1024];
-            let mut data_len = data_buf.len() as u32;
+            let mut data_buf = [0u16; 512];
+            let mut data_len = (data_buf.len() * std::mem::size_of::<u16>()) as u32;
 
             let res = RegEnumValueW(
                 hkey,
@@ -437,12 +463,18 @@ fn enumerate_run_key(root: HKEY, subkey: &str, loc_label: &str, apps: &mut Vec<S
                 &mut name_len,
                 std::ptr::null(),
                 &mut val_type,
-                data_buf.as_mut_ptr(),
+                data_buf.as_mut_ptr() as *mut u8,
                 &mut data_len,
             );
 
-            if res != 0 {
+            if res == 259 {
+                // ERROR_NO_MORE_ITEMS: Kết thúc danh sách
                 break;
+            }
+            if res != 0 {
+                // Lỗi trên 1 item cụ thể (ví dụ bộ đệm không đủ), bỏ qua để tiếp tục quét các item còn lại
+                index += 1;
+                continue;
             }
 
             let name = OsString::from_wide(&name_buf[..name_len as usize])
@@ -451,8 +483,10 @@ fn enumerate_run_key(root: HKEY, subkey: &str, loc_label: &str, apps: &mut Vec<S
 
             let cmd = if val_type == REG_SZ || val_type == REG_EXPAND_SZ {
                 let u16_len = (data_len as usize) / 2;
-                let u16_slice = std::slice::from_raw_parts(data_buf.as_ptr() as *const u16, u16_len);
-                String::from_utf16_lossy(u16_slice).trim_end_matches('\0').trim().to_string()
+                String::from_utf16_lossy(&data_buf[..u16_len])
+                    .trim_end_matches('\0')
+                    .trim()
+                    .to_string()
             } else {
                 String::new()
             };

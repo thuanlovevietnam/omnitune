@@ -29,6 +29,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() -> eframe::Result {
+    if !crate::protection::is_elevated() {
+        eprintln!("[WARN] OmniTune đang chạy không có quyền Administrator. Một số tính năng tối ưu hệ thống có thể bị từ chối quyền (Error 5).");
+    }
+
     // Single instance: if already running, restore existing window and exit!
     unsafe {
         let win_title: Vec<u16> = "OmniTune - Trợ Lý Tối Ưu Hệ Thống"

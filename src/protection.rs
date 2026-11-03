@@ -5,6 +5,103 @@ use sysinfo::Disks;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+use windows_sys::Win32::UI::Shell::IsUserAnAdmin;
+
+pub fn is_elevated() -> bool {
+    unsafe { IsUserAnAdmin() != 0 }
+}
+
+pub fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as usize;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as usize;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[(triple >> 18) & 0x3F] as char);
+        out.push(TABLE[(triple >> 12) & 0x3F] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[(triple >> 6) & 0x3F] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[triple & 0x3F] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+pub fn encode_powershell_cmd(script: &str) -> String {
+    let utf16_bytes: Vec<u8> = script.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    base64_encode(&utf16_bytes)
+}
+
+pub fn run_powershell_elevated_timeout(inner_script: &str, timeout_ms: u32) -> Result<i32, String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::WAIT_TIMEOUT;
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    let inner_b64 = encode_powershell_cmd(inner_script);
+
+    let mut cmd = if is_elevated() {
+        let mut c = Command::new("powershell");
+        c.args([
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-EncodedCommand",
+            &inner_b64,
+        ]);
+        c
+    } else {
+        let wrapper = format!(
+            "try {{ \
+                $p = Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','{inner_b64}' \
+                     -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop; \
+                if ($null -ne $p.ExitCode) {{ exit $p.ExitCode }} else {{ exit 1 }} \
+            }} catch {{ exit 1223 }}"
+        );
+        let outer_b64 = encode_powershell_cmd(&wrapper);
+        let mut c = Command::new("powershell");
+        c.args([
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-EncodedCommand",
+            &outer_b64,
+        ]);
+        c
+    };
+
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let mut child = cmd.spawn().map_err(|e| format!("Không thể khởi chạy PowerShell: {e}"))?;
+    let raw_handle = child.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+    let wait_res = unsafe { WaitForSingleObject(raw_handle, timeout_ms) };
+
+    if wait_res == WAIT_TIMEOUT {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "Lệnh vượt quá thời gian cho phép ({:.1}s).",
+            timeout_ms as f32 / 1000.0
+        ));
+    }
+
+    let status = child.wait().map_err(|e| format!("Lỗi chờ tiến trình: {e}"))?;
+    Ok(status.code().unwrap_or(1))
+}
+
+pub fn run_powershell_elevated(inner_script: &str) -> Result<i32, String> {
+    run_powershell_elevated_timeout(inner_script, 30_000)
+}
+
 #[derive(Deserialize, Default, Debug)]
 struct PhysicalDiskQueryRaw {
     #[serde(rename = "FriendlyName")]
@@ -17,9 +114,10 @@ struct PhysicalDiskQueryRaw {
 
 fn query_physical_disk_smart_status() -> (Option<String>, String, String) {
     let script = r#"$ProgressPreference = 'SilentlyContinue'; try { $d = @(Get-PhysicalDisk); if ($d.Count -gt 0) { $bad = $d | Where-Object { $_.HealthStatus -ne 'Healthy' -or $_.OperationalStatus -ne 'OK' } | Select-Object -First 1; if ($bad) { $bad | Select-Object FriendlyName, HealthStatus, OperationalStatus | ConvertTo-Json -Compress } else { $d[0] | Select-Object FriendlyName, HealthStatus, OperationalStatus | ConvertTo-Json -Compress } } } catch {}"#;
+    let enc = encode_powershell_cmd(script);
 
     let output = Command::new("powershell")
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", script])
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", &enc])
         .creation_flags(CREATE_NO_WINDOW)
         .output();
 
@@ -164,30 +262,55 @@ pub fn set_battery_threshold_result(enable: bool, stop_pct: u32) -> Result<Strin
 }
 
 pub fn enable_hibernate_as_admin() -> bool {
-    let script = "Start-Process powercfg -ArgumentList '/hibernate on' -Verb RunAs -WindowStyle Hidden";
-    Command::new("powershell")
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    matches!(
+        run_powershell_elevated("powercfg /hibernate on; exit $LASTEXITCODE"),
+        Ok(0)
+    )
+}
+
+pub fn disable_hibernate() -> bool {
+    matches!(
+        run_powershell_elevated("powercfg /hibernate off; exit $LASTEXITCODE"),
+        Ok(0)
+    )
 }
 
 pub fn create_restore_point() -> Result<String, String> {
-    let script = "Checkpoint-Computer -Description 'OmniTune-PreTuning' -RestorePointType 'MODIFY_SETTINGS'";
-    let full_cmd = format!(
-        "Start-Process powershell -ArgumentList \"-NoProfile -ExecutionPolicy Bypass -Command {}\" -Verb RunAs -WindowStyle Hidden",
-        script
-    );
+    let script = r#"
+$ErrorActionPreference = 'Stop'
+$vss = Get-Service -Name vss -ErrorAction SilentlyContinue
+if (-not $vss) { exit 101 }
+if ($vss.StartType -eq 'Disabled') { exit 102 }
 
-    let res = Command::new("powershell")
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &full_cmd])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status();
+$pol = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore' -ErrorAction SilentlyContinue
+if ($pol -and ($pol.DisableSR -eq 1 -or $pol.DisableConfig -eq 1)) { exit 103 }
 
-    match res {
-        Ok(s) if s.success() => Ok("Đã gửi yêu cầu tạo System Restore Point thành công.".to_string()),
-        _ => Err("Không thể tạo điểm khôi phục (Cần quyền Admin).".to_string()),
+$cfg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore\cfg' -ErrorAction SilentlyContinue
+if (-not $cfg -or [int]$cfg.DiskPercent -le 0) { exit 104 }
+
+$srKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore'
+if (Test-Path $srKey) {
+    Set-ItemProperty -Path $srKey -Name 'SystemRestorePointCreationFrequency' -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+}
+
+try {
+    Checkpoint-Computer -Description 'OmniTune-PreTuning' -RestorePointType 'MODIFY_SETTINGS' -ErrorAction Stop
+    exit 0
+} catch {
+    exit 105
+}
+"#;
+
+    match run_powershell_elevated_timeout(script, 90_000) {
+        Ok(0) => Ok("Đã tạo điểm khôi phục hệ thống (System Restore Point) thành công.".to_string()),
+        Ok(1223) => Err("Người dùng từ chối cấp quyền Quản trị viên (UAC).".to_string()),
+        Ok(101) => Err("Dịch vụ Volume Shadow Copy (VSS) không tồn tại trên hệ thống.".to_string()),
+        Ok(102) => Err("Dịch vụ Volume Shadow Copy (VSS) đang bị Disabled. Cần bật lại trong Services.".to_string()),
+        Ok(103) => Err("System Restore đã bị vô hiệu hóa bởi Group Policy.".to_string()),
+        Ok(104) => Err("Bảo vệ hệ thống (System Protection) đang tắt trên ổ C:. Hãy bật trong Windows trước khi tạo.".to_string()),
+        Ok(105) => Err("Lỗi khi tạo điểm khôi phục từ Windows (Kiểm tra dung lượng trống ổ C: hoặc quyền hệ thống).".to_string()),
+        Ok(code) => Err(format!("Lỗi khi tạo Restore Point (Mã lỗi: {code}). Kiểm tra dung lượng trống ổ C:.")),
+        Err(e) => Err(format!("Lỗi thực thi Restore Point: {e}")),
     }
 }
 
@@ -282,4 +405,38 @@ pub fn apply_deep_debloat(enable: bool) -> Vec<String> {
     logs.push(if enable { "Chặn Edge chạy ngầm chiếm RAM" } else { "Bật lại Edge chạy ngầm" }.to_string());
 
     logs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_base64_encode() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn test_encode_powershell_cmd() {
+        // "exit 0" in UTF-16LE is: [101, 0, 120, 0, 105, 0, 116, 0, 32, 0, 48, 0]
+        let encoded = encode_powershell_cmd("exit 0");
+        assert_eq!(encoded, "ZQB4AGkAdAAgADAA");
+
+        // Test unicode & curly braces
+        let complex = r#"if ($true) { Write-Output 'Tiếng Việt' }"#;
+        let enc_complex = encode_powershell_cmd(complex);
+        assert!(!enc_complex.is_empty());
+    }
+
+    #[test]
+    fn test_is_elevated_callable() {
+        // Should execute Win32 API without panic/crash
+        let _ = is_elevated();
+    }
 }
