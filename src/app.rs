@@ -1434,6 +1434,7 @@ impl OptimizerApp {
         if self.last_refresh.elapsed() >= Duration::from_secs(1) {
             if self.initial_scan_done {
                 self.sys.refresh_cpu_usage();
+                self.sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
                 self.protection.cpu_usage = self.sys.global_cpu_usage();
                 self.foreground_info = get_foreground_process(&self.sys);
             }

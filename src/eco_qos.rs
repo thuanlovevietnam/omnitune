@@ -1,12 +1,36 @@
 use sysinfo::System;
 use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::Threading::{
-    OpenProcess, SetPriorityClass, SetProcessAffinityMask, SetProcessInformation,
-    ABOVE_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
-    PROCESS_POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING_STATE,
-    PROCESS_SET_INFORMATION, ProcessPowerThrottling,
+    OpenProcess, QueryFullProcessImageNameW, SetPriorityClass, SetProcessAffinityMask,
+    SetProcessInformation, ABOVE_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS,
+    PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+    PROCESS_POWER_THROTTLING_STATE, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
+    ProcessPowerThrottling,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+fn get_process_name_win32(pid: u32) -> Option<String> {
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let mut buf = [0u16; 1024];
+        let mut size = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut size);
+        CloseHandle(handle);
+
+        if ok != 0 && size > 0 {
+            let path_str = String::from_utf16_lossy(&buf[..size as usize]);
+            std::path::Path::new(&path_str)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .map(|s| s.to_string())
+        } else {
+            None
+        }
+    }
+}
 
 pub fn get_foreground_process(sys: &System) -> Option<(u32, String)> {
     unsafe {
@@ -23,6 +47,7 @@ pub fn get_foreground_process(sys: &System) -> Option<(u32, String)> {
         let name = sys
             .process(sysinfo::Pid::from_u32(pid))
             .map(|p| p.name().to_string_lossy().to_string())
+            .or_else(|| get_process_name_win32(pid))
             .unwrap_or_else(|| format!("PID {}", pid));
 
         Some((pid, name))
