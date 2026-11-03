@@ -165,7 +165,72 @@ pub fn get_brightness() -> u32 {
     100
 }
 
+const POWER_SCHEMES_ROOT: &str = r"SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes";
+const SUB_PROCESSOR_GUID: &str = "54533251-82be-4824-96c1-47b60b740d00";
+const THROTTLE_MAX_GUID: &str = "bc5038f7-23e0-4960-96da-33abaf5935ec";
+const COOLING_POLICY_GUID: &str = "94d3a615-a899-4ac5-ae2b-e4d8f634367f";
+
+pub fn get_active_power_scheme_guid() -> Option<String> {
+    crate::reg::reg_read_string(
+        windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
+        POWER_SCHEMES_ROOT,
+        "ActivePowerScheme",
+    )
+}
+
+fn get_power_setting_registry(subgroup: &str, setting: &str, value_name: &str) -> Option<u32> {
+    let scheme_guid = get_active_power_scheme_guid()?;
+    let key = format!(r"{}\{}\{}\{}", POWER_SCHEMES_ROOT, scheme_guid, subgroup, setting);
+    crate::reg::reg_read_u32(
+        windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
+        &key,
+        value_name,
+    )
+}
+
+pub fn extract_hex_value(line: &str) -> Option<u32> {
+    let idx = line.find("0x")?;
+    let hex_slice = &line[idx + 2..];
+    let hex_token: String = hex_slice.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+    if hex_token.is_empty() {
+        None
+    } else {
+        u32::from_str_radix(&hex_token, 16).ok()
+    }
+}
+
+pub fn parse_powercfg_output(output_text: &str) -> (Option<u32>, Option<u32>) {
+    let mut ac_val = None;
+    let mut dc_val = None;
+    let mut all_hex = Vec::new();
+
+    for line in output_text.lines() {
+        if let Some(val) = extract_hex_value(line) {
+            all_hex.push(val);
+            let upper = line.to_uppercase();
+            if upper.contains("DC") || upper.contains("CC") || upper.contains("GLEICHSTROM") || upper.contains("直流") {
+                dc_val = Some(val);
+            } else if upper.contains("AC") || upper.contains("CA") || upper.contains("WECHSELSTROM") || upper.contains("交流") {
+                ac_val = Some(val);
+            }
+        }
+    }
+
+    if ac_val.is_none() && all_hex.len() >= 2 {
+        ac_val = Some(all_hex[all_hex.len() - 2]);
+    }
+    if dc_val.is_none() && !all_hex.is_empty() {
+        dc_val = Some(*all_hex.last().unwrap());
+    }
+
+    (ac_val, dc_val)
+}
+
 pub fn get_cpu_max_state_dc() -> u32 {
+    if let Some(val) = get_power_setting_registry(SUB_PROCESSOR_GUID, THROTTLE_MAX_GUID, "DCSettingIndex") {
+        return val.clamp(50, 100);
+    }
+
     let output = Command::new("powercfg")
         .args(["/q", "SCHEME_CURRENT", "SUB_PROCESSOR", "PROCTHROTTLEMAX"])
         .creation_flags(CREATE_NO_WINDOW)
@@ -173,22 +238,19 @@ pub fn get_cpu_max_state_dc() -> u32 {
 
     if let Ok(out) = output {
         let text = String::from_utf8_lossy(&out.stdout);
-        for line in text.lines() {
-            if line.contains("Current DC Power Setting Index:") {
-                let parts: Vec<&str> = line.split(':').collect();
-                if let Some(hex_str) = parts.get(1) {
-                    let cleaned = hex_str.trim().trim_start_matches("0x");
-                    if let Ok(val) = u32::from_str_radix(cleaned, 16) {
-                        return val;
-                    }
-                }
-            }
+        let (_, dc) = parse_powercfg_output(&text);
+        if let Some(val) = dc {
+            return val.clamp(50, 100);
         }
     }
     80
 }
 
 pub fn get_cpu_max_state_ac() -> u32 {
+    if let Some(val) = get_power_setting_registry(SUB_PROCESSOR_GUID, THROTTLE_MAX_GUID, "ACSettingIndex") {
+        return val.clamp(50, 100);
+    }
+
     let output = Command::new("powercfg")
         .args(["/q", "SCHEME_CURRENT", "SUB_PROCESSOR", "PROCTHROTTLEMAX"])
         .creation_flags(CREATE_NO_WINDOW)
@@ -196,16 +258,9 @@ pub fn get_cpu_max_state_ac() -> u32 {
 
     if let Ok(out) = output {
         let text = String::from_utf8_lossy(&out.stdout);
-        for line in text.lines() {
-            if line.contains("Current AC Power Setting Index:") {
-                let parts: Vec<&str> = line.split(':').collect();
-                if let Some(hex_str) = parts.get(1) {
-                    let cleaned = hex_str.trim().trim_start_matches("0x");
-                    if let Ok(val) = u32::from_str_radix(cleaned, 16) {
-                        return val;
-                    }
-                }
-            }
+        let (ac, _) = parse_powercfg_output(&text);
+        if let Some(val) = ac {
+            return val.clamp(50, 100);
         }
     }
     100
@@ -238,6 +293,10 @@ pub fn set_cooling_policy(active: bool) -> bool {
 }
 
 pub fn get_cooling_policy() -> bool {
+    if let Some(val) = get_power_setting_registry(SUB_PROCESSOR_GUID, COOLING_POLICY_GUID, "DCSettingIndex") {
+        return val == 1;
+    }
+
     let output = Command::new("powercfg")
         .args(["/q", "SCHEME_CURRENT", "SUB_PROCESSOR", "SYSCOOLPOL"])
         .creation_flags(CREATE_NO_WINDOW)
@@ -245,10 +304,9 @@ pub fn get_cooling_policy() -> bool {
 
     if let Ok(out) = output {
         let text = String::from_utf8_lossy(&out.stdout);
-        for line in text.lines() {
-            if line.contains("Current DC Power Setting Index:") {
-                return line.contains("0x00000001");
-            }
+        let (_, dc) = parse_powercfg_output(&text);
+        if let Some(val) = dc {
+            return val == 1;
         }
     }
     true
@@ -534,12 +592,13 @@ pub fn set_large_system_cache(enable: bool) -> bool {
 }
 
 pub fn set_memory_compression(enable: bool) -> bool {
-    let cmd = if enable { "Enable-MMAgent -MemoryCompression" } else { "Disable-MMAgent -MemoryCompression" };
-    Command::new("powershell")
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", cmd])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status()
-        .map(|s| s.success())
+    let cmd = if enable {
+        "Enable-MMAgent -MemoryCompression; exit $LASTEXITCODE"
+    } else {
+        "Disable-MMAgent -MemoryCompression; exit $LASTEXITCODE"
+    };
+    crate::protection::run_powershell_elevated(cmd)
+        .map(|code| code == 0)
         .unwrap_or(false)
 }
 
@@ -652,4 +711,44 @@ pub fn get_system_responsiveness() -> Option<u32> {
         r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile",
         "SystemResponsiveness",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_hex_value() {
+        assert_eq!(extract_hex_value("Current AC Power Setting Index: 0x00000064"), Some(100));
+        assert_eq!(extract_hex_value("Current DC Power Setting Index: 0x00000050"), Some(80));
+        assert_eq!(extract_hex_value("Some value 0x1"), Some(1));
+        assert_eq!(extract_hex_value("No hex value here"), None);
+    }
+
+    #[test]
+    fn test_parse_powercfg_output_multilingual() {
+        // English
+        let en_output = "Current AC Power Setting Index: 0x00000064\nCurrent DC Power Setting Index: 0x00000050";
+        let (ac, dc) = parse_powercfg_output(en_output);
+        assert_eq!(ac, Some(100));
+        assert_eq!(dc, Some(80));
+
+        // German
+        let de_output = "Index der aktuellen Wechselstromeinstellung: 0x00000064\nIndex der aktuellen Gleichstromeinstellung: 0x00000050";
+        let (ac, dc) = parse_powercfg_output(de_output);
+        assert_eq!(ac, Some(100));
+        assert_eq!(dc, Some(80));
+
+        // French (CA / CC)
+        let fr_output = "Index du paramètre d’alimentation CA actuel : 0x00000064\nIndex du paramètre d’alimentation CC actuel : 0x00000050";
+        let (ac, dc) = parse_powercfg_output(fr_output);
+        assert_eq!(ac, Some(100));
+        assert_eq!(dc, Some(80));
+
+        // Chinese
+        let zh_output = "当前交流电源设置索引: 0x00000064\n当前直流电源设置索引: 0x00000050";
+        let (ac, dc) = parse_powercfg_output(zh_output);
+        assert_eq!(ac, Some(100));
+        assert_eq!(dc, Some(80));
+    }
 }

@@ -114,7 +114,7 @@ pub fn apply_scenario(
             // Prioritize IDEs
             let boosted_ides = prioritize_apps(
                 sys,
-                &["code", "devenv", "idea64", "clion64", "pycharm64", "sublime_text", "cursor"],
+                &["code", "devenv", "idea64", "clion64", "pycharm64", "sublime_text", "cursor", "windsurf", "webstorm64", "rider64"],
                 ABOVE_NORMAL_PRIORITY_CLASS,
             );
 
@@ -355,20 +355,22 @@ pub fn detect_recommended_scenario(
 
     let procs = sys.processes();
 
-    // 2. Gaming detection (Known games, game platforms, 3D engines)
-    let has_game = procs.values().any(|p| {
-        let name = p.name().to_string_lossy().to_lowercase();
-        name.contains("valorant")
-            || name.contains("leagueclient")
-            || name.contains("dota2")
-            || name.contains("cs2")
-            || name.contains("genshin")
-            || name.contains("minecraft")
-            || name.contains("steamapps")
-            || name.contains("epicgames")
-            || name.contains("riotclient")
-            || name.contains("gta")
-            || name.contains("cyberpunk")
+    // 2. Gaming detection (DirectX/Vulkan/OpenGL 3D graphics & game platform paths)
+    let my_pid = std::process::id();
+    let has_game = procs.iter().any(|(&pid, p)| {
+        let raw_pid = pid.as_u32();
+        if raw_pid <= 4 || raw_pid == my_pid {
+            return false;
+        }
+        let exe_str = p
+            .exe()
+            .and_then(|e| e.to_str())
+            .unwrap_or_else(|| p.name().to_str().unwrap_or(""));
+        if !exe_str.is_empty() {
+            crate::gpu::is_process_using_3d_graphics(raw_pid, exe_str)
+        } else {
+            false
+        }
     });
     if has_game {
         return Some(Scenario::Gaming);
@@ -403,7 +405,12 @@ pub fn detect_recommended_scenario(
             || name.contains("idea64.exe")
             || name.contains("clion64.exe")
             || name.contains("pycharm64.exe")
+            || name.contains("code.exe")
             || name.contains("cursor.exe")
+            || name.contains("windsurf.exe")
+            || name.contains("sublime_text.exe")
+            || name.contains("webstorm64.exe")
+            || name.contains("rider64.exe")
     });
     if has_compiler_or_ide {
         return Some(Scenario::Developer);
@@ -452,27 +459,52 @@ pub fn prioritize_apps(sys: &mut System, app_names: &[&str], priority_class: u32
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let mut modified = 0;
 
+    let my_pid = std::process::id();
     for (&pid, proc) in sys.processes() {
+        let raw_pid = pid.as_u32();
+        if raw_pid <= 4 || raw_pid == my_pid {
+            continue;
+        }
+
         let name = proc.name().to_string_lossy().to_lowercase();
         let matches = app_names
             .iter()
             .any(|&target| name.contains(&target.to_lowercase()));
 
         if matches {
-            let raw_pid = pid.as_u32();
-            if raw_pid > 4 {
-                unsafe {
-                    let handle = OpenProcess(PROCESS_SET_INFORMATION, 0, raw_pid);
-                    if !handle.is_null() {
-                        if SetPriorityClass(handle, priority_class) != 0 {
-                            modified += 1;
-                        }
-                        CloseHandle(handle);
+            unsafe {
+                let handle = OpenProcess(PROCESS_SET_INFORMATION, 0, raw_pid);
+                if !handle.is_null() {
+                    if SetPriorityClass(handle, priority_class) != 0 {
+                        modified += 1;
                     }
+                    CloseHandle(handle);
                 }
             }
         }
     }
 
     modified
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scenario_names() {
+        assert_eq!(Scenario::Gaming.name(), "Game & Đồ họa nặng");
+        assert_eq!(Scenario::Developer.name(), "Lập trình & Biên dịch");
+        assert_eq!(Scenario::OfficeMeeting.name(), "Văn phòng & Họp trực tuyến");
+        assert_eq!(Scenario::MediaChill.name(), "Xem phim & Nghe nhạc");
+        assert_eq!(Scenario::IdlePowerSave.name(), "Nghỉ ngơi & Tiết kiệm điện");
+    }
+
+    #[test]
+    fn test_detect_idle_scenario() {
+        if let Ok(sys) = System::new() {
+            let scen = detect_recommended_scenario(&sys, true, 100, 350_000);
+            assert_eq!(scen, Some(Scenario::IdlePowerSave));
+        }
+    }
 }

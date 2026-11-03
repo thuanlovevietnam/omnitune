@@ -29,6 +29,8 @@ fn default_5() -> u32 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default)]
+    pub user_customized: bool,
     pub timer_1ms_enabled: bool,
     pub keep_awake_mode: u8,
     pub cpu_limit_dc: u32,
@@ -97,6 +99,8 @@ pub struct AppConfig {
     // Nhóm 7: Telemetry & DiagTrack
     #[serde(default = "default_true")]
     pub disable_telemetry: bool,
+    #[serde(default = "default_true")]
+    pub disable_dmwappush: bool,
     #[serde(default)]
     pub deep_debloat: bool,
 }
@@ -104,6 +108,7 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            user_customized: false,
             timer_1ms_enabled: false,
             keep_awake_mode: 0,
             cpu_limit_dc: 80,
@@ -138,6 +143,7 @@ impl Default for AppConfig {
             system_responsiveness_zero: true,
             tcp_ecn_enabled: true,
             disable_telemetry: true,
+            disable_dmwappush: true,
             deep_debloat: false,
         }
     }
@@ -232,5 +238,33 @@ pub fn set_autostart_registry(enable: bool) -> bool {
 
         RegCloseKey(hkey);
         success
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_backward_compatibility_old_config_json() {
+        let old_json = r#"{
+            "timer_1ms_enabled": false,
+            "keep_awake_mode": 0,
+            "cpu_limit_dc": 80,
+            "cpu_limit_ac": 100,
+            "cooling_active": false,
+            "gamedvr_enabled": true,
+            "auto_pilot_enabled": true,
+            "battery_threshold_80": false,
+            "minimize_to_tray": false,
+            "run_on_startup": false
+        }"#;
+
+        let cfg: Result<AppConfig, _> = serde_json::from_str(old_json);
+        assert!(cfg.is_ok());
+        let cfg = cfg.unwrap();
+        assert!(!cfg.user_customized);
+        assert!(cfg.disable_dmwappush);
+        assert!(cfg.disable_telemetry);
     }
 }

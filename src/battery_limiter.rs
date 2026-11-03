@@ -2,12 +2,8 @@ use crate::reg::{
     get_device_oem_vendor, reg_enum_subkeys, reg_key_exists, reg_read_string, reg_read_u32,
     OemVendor,
 };
-use std::os::windows::process::CommandExt;
 use std::path::Path;
-use std::process::Command;
 use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
-
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatterySupportKind {
@@ -369,6 +365,7 @@ pub fn set_battery_threshold(enable: bool, stop_pct: u32) -> Result<String, Stri
         OemVendor::Lenovo => {
             let slots = find_lenovo_battery_slots();
             let mut script_parts = Vec::new();
+            script_parts.push("$ErrorActionPreference = 'Stop'".to_string());
 
             for (base, sub) in &slots {
                 let ps_path = if base.contains("WOW6432Node") {
@@ -389,31 +386,20 @@ pub fn set_battery_threshold(enable: bool, stop_pct: u32) -> Result<String, Stri
                 ));
             }
 
-            if script_parts.is_empty() {
+            if script_parts.len() <= 1 {
                 return Err("Không tìm thấy đường dẫn cấu hình pin Lenovo.".to_string());
             }
 
             let combined_script = script_parts.join("; ");
-            let full_cmd = format!(
-                "Start-Process powershell -ArgumentList \"-NoProfile -ExecutionPolicy Bypass -Command {}\" -Verb RunAs -WindowStyle Hidden",
-                combined_script
-            );
-
-            let ok = Command::new("powershell")
-                .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &full_cmd])
-                .creation_flags(CREATE_NO_WINDOW)
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-
-            if ok {
-                Ok(format!(
+            match crate::protection::run_powershell_elevated(&combined_script) {
+                Ok(0) => Ok(format!(
                     "Đã áp dụng giới hạn sạc {}% cho {} pack pin Lenovo.",
                     stop_pct,
                     slots.len()
-                ))
-            } else {
-                Err("Không thể thực thi lệnh cập nhật quyền Quản trị viên (UAC).".to_string())
+                )),
+                Ok(1223) => Err("Người dùng từ chối cấp quyền Quản trị viên (UAC).".to_string()),
+                Ok(code) => Err(format!("Lỗi khi thiết lập pin Lenovo (Mã lỗi: {code}).")),
+                Err(e) => Err(format!("Lỗi thực thi lệnh Lenovo: {e}")),
             }
         }
         OemVendor::Asus => {
@@ -423,24 +409,13 @@ pub fn set_battery_threshold(enable: bool, stop_pct: u32) -> Result<String, Stri
             let asus_target_pct = if enable { stop_pct } else { 100 };
 
             let script = format!(
-                r#"if (-not (Test-Path '{ps_key}')) {{ New-Item -Path '{ps_key}' -Force | Out-Null }}; Set-ItemProperty -Path '{ps_key}' -Name ChargingMode -Value {mode_val}; try {{ (Get-CimInstance -Namespace root\wmi -ClassName AsusAtkWmi_WMNB -ErrorAction Stop).DEVS(0x00120057, {asus_target_pct}) }} catch {{}}"#
+                r#"$ErrorActionPreference = 'Stop'; if (-not (Test-Path '{ps_key}')) {{ New-Item -Path '{ps_key}' -Force | Out-Null }}; Set-ItemProperty -Path '{ps_key}' -Name ChargingMode -Value {mode_val}; try {{ (Get-CimInstance -Namespace root\wmi -ClassName AsusAtkWmi_WMNB -ErrorAction Stop).DEVS(0x00120057, {asus_target_pct}) }} catch {{}}"#
             );
-            let full_cmd = format!(
-                "Start-Process powershell -ArgumentList \"-NoProfile -ExecutionPolicy Bypass -Command {}\" -Verb RunAs -WindowStyle Hidden",
-                script
-            );
-
-            let ok = Command::new("powershell")
-                .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &full_cmd])
-                .creation_flags(CREATE_NO_WINDOW)
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-
-            if ok {
-                Ok(format!("Đã cập nhật chế độ sạc ASUS Battery Health thành {}%.", if enable { 80 } else { 100 }))
-            } else {
-                Err("Không thể thực thi quyền Quản trị viên cho ASUS Battery Health.".to_string())
+            match crate::protection::run_powershell_elevated(&script) {
+                Ok(0) => Ok(format!("Đã cập nhật chế độ sạc ASUS Battery Health thành {}%.", if enable { 80 } else { 100 })),
+                Ok(1223) => Err("Người dùng từ chối cấp quyền Quản trị viên (UAC).".to_string()),
+                Ok(code) => Err(format!("Lỗi khi thiết lập pin ASUS (Mã lỗi: {code}).")),
+                Err(e) => Err(format!("Lỗi thực thi lệnh ASUS: {e}")),
             }
         }
         OemVendor::Dell => {
@@ -451,21 +426,14 @@ pub fn set_battery_threshold(enable: bool, stop_pct: u32) -> Result<String, Stri
                     "--PrimaryBattChargeCfg=Standard".to_string()
                 };
 
-                let cmd = format!(
-                    "Start-Process -FilePath '{cctk}' -ArgumentList '{arg}' -Verb RunAs -WindowStyle Hidden"
+                let script = format!(
+                    r#"& '{cctk}' "{arg}"; exit $LASTEXITCODE"#
                 );
-
-                let ok = Command::new("powershell")
-                    .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &cmd])
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
-
-                if ok {
-                    Ok(format!("Đã cấu hình ngưỡng sạc Dell CCTK thành {stop_pct}%."))
-                } else {
-                    Err("Lỗi khi gọi Dell Command Configure.".to_string())
+                match crate::protection::run_powershell_elevated(&script) {
+                    Ok(0) => Ok(format!("Đã cấu hình ngưỡng sạc Dell CCTK thành {stop_pct}%.")),
+                    Ok(1223) => Err("Người dùng từ chối cấp quyền Quản trị viên (UAC).".to_string()),
+                    Ok(code) => Err(format!("Lỗi khi thiết lập Dell CCTK (Mã lỗi: {code}).")),
+                    Err(e) => Err(format!("Lỗi thực thi lệnh Dell: {e}")),
                 }
             } else {
                 Err("Chưa cài đặt Dell Command | Configure.".to_string())
@@ -474,24 +442,13 @@ pub fn set_battery_threshold(enable: bool, stop_pct: u32) -> Result<String, Stri
         OemVendor::Hp => {
             let setting_val = if enable { "80%" } else { "100%" };
             let script = format!(
-                r#"try {{ $svc = Get-CimInstance -Namespace root/hp/instrumentedBIOS -ClassName HP_BIOSSettingInterface -ErrorAction Stop; $svc.SetBIOSSetting('Battery Care Function', '{setting_val}') }} catch {{}}"#
+                r#"$ErrorActionPreference = 'Stop'; $svc = Get-CimInstance -Namespace root/hp/instrumentedBIOS -ClassName HP_BIOSSettingInterface -ErrorAction Stop; $svc.SetBIOSSetting('Battery Care Function', '{setting_val}')"#
             );
-            let full_cmd = format!(
-                "Start-Process powershell -ArgumentList \"-NoProfile -ExecutionPolicy Bypass -Command {}\" -Verb RunAs -WindowStyle Hidden",
-                script
-            );
-
-            let ok = Command::new("powershell")
-                .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &full_cmd])
-                .creation_flags(CREATE_NO_WINDOW)
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-
-            if ok {
-                Ok(format!("Đã thiết lập HP Battery Care Function."))
-            } else {
-                Err("Lỗi khi can thiệp HP BIOS Setting.".to_string())
+            match crate::protection::run_powershell_elevated(&script) {
+                Ok(0) => Ok("Đã thiết lập HP Battery Care Function.".to_string()),
+                Ok(1223) => Err("Người dùng từ chối cấp quyền Quản trị viên (UAC).".to_string()),
+                Ok(code) => Err(format!("Lỗi khi can thiệp HP BIOS Setting (Mã lỗi: {code}).")),
+                Err(e) => Err(format!("Lỗi thực thi lệnh HP: {e}")),
             }
         }
         _ => Err("Bo mạch chưa được hỗ trợ.".to_string()),

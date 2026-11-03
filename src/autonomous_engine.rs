@@ -300,8 +300,8 @@ impl AutonomousEngine {
             && ram_load_pct >= ram_threshold
             && self.last_ram_trim.elapsed() >= Duration::from_secs(60)
         {
+            self.last_ram_trim = Instant::now();
             if self.is_pro {
-                self.last_ram_trim = Instant::now();
                 let (freed, count) = trim_working_sets(sys);
                 if freed > 10 * 1024 * 1024 {
                     self.log(

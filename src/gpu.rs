@@ -160,13 +160,60 @@ pub fn set_app_gpu_preference(exe_path: &str, pref: AppGpuPreference, auto_opt_i
 }
 
 // Dò tìm động tiến trình 3D/DirectX/Vulkan đang chạy trên máy (không hardcode)
-fn is_process_using_3d_graphics(pid: u32, exe_path: &str) -> bool {
+pub(crate) fn is_process_using_3d_graphics(pid: u32, exe_path: &str) -> bool {
+    let my_pid = std::process::id();
+    if pid <= 4 || pid == my_pid {
+        return false;
+    }
+
     let lower_path = exe_path.to_lowercase();
 
+    // 0. Loại trừ sớm browser, shell, launcher, media, dev/office và system apps
+    // Tránh nhận diện nhầm & giảm tải CPU kiểm tra module Win32
+    let excluded_keywords = [
+        // Shell & Hệ điều hành
+        "explorer.exe", "dwm.exe", "windowsterminal.exe", "textinputhost.exe",
+        "applicationframehost.exe", "systemsettings.exe", "shellexperiencehost.exe",
+        "searchapp.exe", "searchhost.exe", "startmenuexperiencehost.exe", "taskmgr.exe",
+        "powershell.exe", "cmd.exe", "conhost.exe", "powertoys.exe", "translucenttb.exe",
+
+        // Trình duyệt web
+        "chrome.exe", "brave.exe", "edge.exe", "msedge.exe", "firefox.exe", "opera.exe",
+
+        // Game Launchers & Client Store (không phải bản thân trò chơi)
+        "steam.exe", "steamwebhelper.exe", "steamservice.exe",
+        "epicgameslauncher.exe", "riotclientservices.exe", "riotclientux.exe",
+        "battle.net.exe", "agent.exe", "galaxyclient.exe", "galaxyclientservice.exe",
+        "upc.exe", "ubisoftconnect.exe", "eadesktop.exe", "origin.exe",
+
+        // IDE, Editor & Terminal
+        "code.exe", "cursor.exe", "windsurf.exe", "devenv.exe", "idea64.exe",
+        "clion64.exe", "pycharm64.exe", "webstorm64.exe", "rider64.exe", "sublime_text.exe",
+
+        // Meeting, Chat & Văn phòng
+        "discord.exe", "slack.exe", "teams.exe", "zoom.exe", "webex.exe",
+        "winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "onenote.exe",
+
+        // Media Player & Audio (thuộc kịch bản Media riêng)
+        "vlc.exe", "potplayer", "mpc-hc", "mpc-be", "mpv.exe", "kmplayer",
+        "foobar2000", "musicbee.exe", "aimp.exe", "spotify.exe", "netflix",
+
+        // Live Wallpaper & Background Render tools
+        "wallpaper32.exe", "wallpaper64.exe", "lively.exe", "obs64.exe", "obs32.exe", "sharex.exe",
+    ];
+    if excluded_keywords.iter().any(|&k| lower_path.contains(k)) {
+        return false;
+    }
+    if lower_path.contains(r"\windows\system32\") || lower_path.contains(r"\windows\systemapps\") {
+        return false;
+    }
+
     // 1. Thư mục cài đặt thư viện game của các nền tảng phổ biến trên máy
+    // Lưu ý: Không đưa "windowsapps" vào đây vì thư mục này chứa tất cả ứng dụng Microsoft Store (WhatsApp, Calculator...)
+    // Các game Xbox Game Pass cài trong windowsapps sẽ được phát hiện chính xác qua module 3D ở bước 2.
     let game_dirs = [
         "steamapps", "riot games", "epic games", "ubisoft", "gog galaxy",
-        "ea games", "origin games", "battle.net", "xboxgames", "windowsapps",
+        "ea games", "origin games", "battle.net", "xboxgames",
     ];
     if game_dirs.iter().any(|&d| lower_path.contains(d)) {
         return true;
@@ -206,17 +253,8 @@ fn is_process_using_3d_graphics(pid: u32, exe_path: &str) -> bool {
                         || mod_name.starts_with("nvapi")
                         || mod_name.starts_with("amdxc")
                     {
-                        // Loại trừ các browser và shell để tránh chiếm quyền dGPU không cần thiết
-                        if !lower_path.contains("explorer.exe")
-                            && !lower_path.contains("chrome.exe")
-                            && !lower_path.contains("brave.exe")
-                            && !lower_path.contains("edge.exe")
-                            && !lower_path.contains("msedge.exe")
-                            && !lower_path.contains("firefox.exe")
-                        {
-                            is_3d = true;
-                            break;
-                        }
+                        is_3d = true;
+                        break;
                     }
                 }
             }
@@ -639,5 +677,27 @@ mod tests {
         );
         assert_eq!(read_back.as_deref(), Some("GpuPreference=2;AutoOptIn=1;"));
         assert!(set_app_gpu_preference(test_exe, AppGpuPreference::Default, false));
+    }
+
+    #[test]
+    fn test_is_process_using_3d_graphics_exclusions() {
+        let my_pid = std::process::id();
+        assert!(!is_process_using_3d_graphics(my_pid, "omnitune.exe"));
+        assert!(!is_process_using_3d_graphics(0, ""));
+        assert!(!is_process_using_3d_graphics(4, "System"));
+        assert!(!is_process_using_3d_graphics(1234, r"C:\Program Files\Google\Chrome\Application\chrome.exe"));
+        assert!(!is_process_using_3d_graphics(1234, r"C:\Users\Admin\AppData\Local\Programs\Microsoft VS Code\Code.exe"));
+        assert!(!is_process_using_3d_graphics(1234, r"C:\Program Files (x86)\Steam\steam.exe"));
+        assert!(!is_process_using_3d_graphics(1234, r"C:\Program Files\WindowsApps\5319275A.WhatsAppDesktop_cv1g1gvanyjgm\WhatsApp.exe"));
+        assert!(!is_process_using_3d_graphics(1234, r"C:\Windows\System32\dwm.exe"));
+        assert!(!is_process_using_3d_graphics(1234, r"C:\Program Files\Spotify\Spotify.exe"));
+    }
+
+    #[test]
+    fn test_is_process_using_3d_graphics_game_folder() {
+        assert!(is_process_using_3d_graphics(99999, r"D:\SteamLibrary\steamapps\common\Cyberpunk 2077\bin\x64\Cyberpunk2077.exe"));
+        assert!(is_process_using_3d_graphics(99999, r"C:\Riot Games\VALORANT\live\ShooterGame\Binaries\Win64\VALORANT-Win64-Shipping.exe"));
+        assert!(is_process_using_3d_graphics(99999, r"E:\Epic Games\GTA5\GTA5.exe"));
+        assert!(is_process_using_3d_graphics(99999, r"C:\XboxGames\Halo Infinite\Content\HaloInfinite.exe"));
     }
 }

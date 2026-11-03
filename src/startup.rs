@@ -26,6 +26,20 @@ pub fn is_telemetry_active() -> bool {
     }
 }
 
+pub fn is_dmwappush_active() -> bool {
+    let output = Command::new("sc.exe")
+        .args(["query", "dmwappushservice"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        text.contains("RUNNING")
+    } else {
+        false
+    }
+}
+
 pub fn toggle_telemetry(disable: bool) -> bool {
     use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
 
@@ -45,15 +59,24 @@ pub fn toggle_telemetry(disable: bool) -> bool {
     );
 
     let script = if disable {
-        "Start-Process sc.exe -ArgumentList 'stop DiagTrack' -Verb RunAs -WindowStyle Hidden; Start-Process sc.exe -ArgumentList 'config DiagTrack start=disabled' -Verb RunAs -WindowStyle Hidden; Start-Process sc.exe -ArgumentList 'stop dmwappushservice' -Verb RunAs -WindowStyle Hidden; Start-Process sc.exe -ArgumentList 'config dmwappushservice start=disabled' -Verb RunAs -WindowStyle Hidden"
+        r#"$ErrorActionPreference = 'SilentlyContinue'; sc.exe stop DiagTrack; sc.exe config DiagTrack start=disabled; exit 0"#
     } else {
-        "Start-Process sc.exe -ArgumentList 'config DiagTrack start=auto' -Verb RunAs -WindowStyle Hidden; Start-Process sc.exe -ArgumentList 'start DiagTrack' -Verb RunAs -WindowStyle Hidden; Start-Process sc.exe -ArgumentList 'config dmwappushservice start=delayed-auto' -Verb RunAs -WindowStyle Hidden; Start-Process sc.exe -ArgumentList 'start dmwappushservice' -Verb RunAs -WindowStyle Hidden"
+        r#"$ErrorActionPreference = 'SilentlyContinue'; sc.exe config DiagTrack start=auto; sc.exe start DiagTrack; exit 0"#
     };
 
-    Command::new("powershell")
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status()
-        .map(|s| s.success())
+    crate::protection::run_powershell_elevated(script)
+        .map(|code| code == 0)
+        .unwrap_or(false)
+}
+
+pub fn toggle_dmwappush(disable: bool) -> bool {
+    let script = if disable {
+        r#"$ErrorActionPreference = 'SilentlyContinue'; sc.exe stop dmwappushservice; sc.exe config dmwappushservice start=disabled; exit 0"#
+    } else {
+        r#"$ErrorActionPreference = 'SilentlyContinue'; sc.exe config dmwappushservice start=delayed-auto; sc.exe start dmwappushservice; exit 0"#
+    };
+
+    crate::protection::run_powershell_elevated(script)
+        .map(|code| code == 0)
         .unwrap_or(false)
 }

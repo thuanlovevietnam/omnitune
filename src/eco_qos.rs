@@ -16,7 +16,7 @@ pub fn get_foreground_process(sys: &System) -> Option<(u32, String)> {
         }
         let mut pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, &mut pid);
-        if pid <= 4 {
+        if pid <= 4 || pid == std::process::id() {
             return None;
         }
 
@@ -95,9 +95,10 @@ pub fn apply_foreground_boost_and_eco(
         "brave",
     ];
 
+    let my_pid = std::process::id();
     for (&pid, proc) in sys.processes() {
         let raw_pid = pid.as_u32();
-        if Some(raw_pid) == fg_pid || raw_pid <= 4 {
+        if Some(raw_pid) == fg_pid || raw_pid <= 4 || raw_pid == my_pid {
             continue;
         }
 

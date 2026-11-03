@@ -20,7 +20,7 @@ use crate::power::{
     PowerStatus,
 };
 use crate::protection::{
-    create_restore_point, enable_hibernate_as_admin, get_protection_overview, restore_windows_defaults,
+    create_restore_point, disable_hibernate, enable_hibernate_as_admin, get_protection_overview, restore_windows_defaults,
     set_battery_threshold, ProtectionOverview,
 };
 use crate::startup::{get_startup_apps, is_telemetry_active, toggle_startup_item};
@@ -38,6 +38,7 @@ pub enum BackgroundMessage {
     InitialScan(InitialScanResult),
     BatteryUpdate(Vec<BatteryDetails>),
     UpdateAvailable { latest_version: String, download_url: String },
+    RestorePointResult(Result<String, String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,6 +219,7 @@ pub struct InitialScanResult {
     pub startup_apps: Vec<StartupAppItem>,
     pub protection: ProtectionOverview,
     pub is_telemetry_running: bool,
+    pub is_dmwappush_running: bool,
     pub gamedvr_enabled: bool,
     pub cpu_cores_info: String,
     pub dual_batteries: Option<Vec<BatteryDetails>>,
@@ -335,6 +337,9 @@ pub struct OptimizerApp {
     // Update Checker
     update_available: Option<(String, String)>,
     last_interaction: Instant,
+
+    // Restore Point Background Worker
+    is_creating_restore_point: bool,
 }
 
 fn render_switch_custom(ui: &mut egui::Ui, value: &mut bool, on_text: &str, off_text: &str) -> bool {
@@ -767,80 +772,86 @@ impl OptimizerApp {
         let run_on_startup = crate::config::is_autostart_enabled();
         config.run_on_startup = run_on_startup;
 
-        // Apply saved configurations immediately on launch
-        if config.timer_1ms_enabled && is_pro {
-            set_timer_resolution_1ms(true);
-        }
-        if config.keep_awake_mode > 0 {
-            set_keep_awake(config.keep_awake_mode);
-        }
-        if config.cooling_active {
-            set_cooling_policy(true);
-        }
-        if config.gamedvr_enabled {
-            let _ = set_gamedvr(false);
-        }
-        if config.battery_threshold_80 && is_pro {
-            let _ = set_battery_threshold(true, 80);
-        }
-        if config.sysmain_disabled {
-            crate::power::set_sysmain_service(false);
-        }
-        if config.disable_ntfs_last_access {
-            crate::power::set_ntfs_last_access(true);
-        }
-        if config.mmcss_optimized {
-            crate::power::set_mmcss_gaming_responsiveness(true);
-        }
-        if config.system_responsiveness_zero {
-            crate::power::set_system_responsiveness(true);
-        }
-        if config.tcp_autotuning {
-            crate::power::set_tcp_optimization(true);
-        }
-        if config.cpu_min_state_pct > 0 {
-            crate::power::set_cpu_min_state(config.cpu_min_state_pct);
-        }
-        if config.win32_priority_boost {
-            crate::power::set_win32_priority_separation(true);
-        }
-        if config.fast_shutdown_recovery {
-            crate::power::set_fast_shutdown_recovery(true);
-        }
-        if config.large_system_cache {
-            crate::power::set_large_system_cache(true);
-        }
-        if config.memory_compression {
-            crate::power::set_memory_compression(true);
-        }
-        if config.disable_8dot3_name {
-            crate::power::set_ntfs_8dot3_name(true);
-        }
-        if config.trim_enabled {
-            crate::power::set_ssd_trim(true);
-        }
-        if config.wait_to_kill_service {
-            crate::power::set_wait_to_kill_service(true);
-        }
-        if config.menu_show_delay_zero {
-            crate::power::set_menu_show_delay(true);
-        }
-        if config.startup_delay_zero {
-            crate::power::set_startup_delay(true);
-        }
-        if config.tcp_ecn_enabled {
-            crate::power::set_tcp_ecn(true);
-        }
-        if config.disable_telemetry && is_pro {
-            crate::startup::toggle_telemetry(true);
-        }
-        if config.deep_debloat && is_pro {
-            let _ = crate::protection::apply_deep_debloat(true);
+        // Apply saved configurations immediately on launch (only if user customized settings)
+        if config.user_customized {
+            if config.timer_1ms_enabled && is_pro {
+                set_timer_resolution_1ms(true);
+            }
+            if config.keep_awake_mode > 0 {
+                set_keep_awake(config.keep_awake_mode);
+            }
+            if config.cooling_active {
+                set_cooling_policy(true);
+            }
+            if config.gamedvr_enabled {
+                let _ = set_gamedvr(false);
+            }
+            if config.battery_threshold_80 && is_pro {
+                let _ = set_battery_threshold(true, 80);
+            }
+            if config.sysmain_disabled {
+                crate::power::set_sysmain_service(false);
+            }
+            if config.disable_ntfs_last_access {
+                crate::power::set_ntfs_last_access(true);
+            }
+            if config.mmcss_optimized {
+                crate::power::set_mmcss_gaming_responsiveness(true);
+            }
+            if config.system_responsiveness_zero {
+                crate::power::set_system_responsiveness(true);
+            }
+            if config.tcp_autotuning {
+                crate::power::set_tcp_optimization(true);
+            }
+            if config.cpu_min_state_pct > 0 {
+                crate::power::set_cpu_min_state(config.cpu_min_state_pct);
+            }
+            if config.win32_priority_boost {
+                crate::power::set_win32_priority_separation(true);
+            }
+            if config.fast_shutdown_recovery {
+                crate::power::set_fast_shutdown_recovery(true);
+            }
+            if config.large_system_cache {
+                crate::power::set_large_system_cache(true);
+            }
+            if config.memory_compression {
+                crate::power::set_memory_compression(true);
+            }
+            if config.disable_8dot3_name {
+                crate::power::set_ntfs_8dot3_name(true);
+            }
+            if config.trim_enabled {
+                crate::power::set_ssd_trim(true);
+            }
+            if config.wait_to_kill_service {
+                crate::power::set_wait_to_kill_service(true);
+            }
+            if config.menu_show_delay_zero {
+                crate::power::set_menu_show_delay(true);
+            }
+            if config.startup_delay_zero {
+                crate::power::set_startup_delay(true);
+            }
+            if config.tcp_ecn_enabled {
+                crate::power::set_tcp_ecn(true);
+            }
+            if config.disable_telemetry && is_pro {
+                crate::startup::toggle_telemetry(true);
+            }
+            if config.disable_dmwappush {
+                crate::startup::toggle_dmwappush(true);
+            }
+            if config.deep_debloat && is_pro {
+                let _ = crate::protection::apply_deep_debloat(true);
+            }
+
+            // Apply permanent OS responsiveness tweaks
+            crate::power::apply_permanent_windows_system_tweaks();
         }
 
-        // Apply permanent OS responsiveness tweaks
-        crate::power::apply_permanent_windows_system_tweaks();
-
+        let cfg_user_customized = config.user_customized;
         let cfg_dc = config.cpu_limit_dc;
         let cfg_ac = config.cpu_limit_ac;
 
@@ -869,14 +880,14 @@ impl OptimizerApp {
             bg_sys.refresh_memory();
             bg_sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
-            // Apply CPU limits if configured, or read from powercfg
-            let dc = if cfg_dc > 0 {
+            // Apply CPU limits if configured by user, or read from OS powercfg
+            let dc = if cfg_user_customized && cfg_dc > 0 {
                 let _ = set_cpu_max_state_dc(cfg_dc);
                 Some(cfg_dc)
             } else {
                 Some(crate::power::get_cpu_max_state_dc())
             };
-            let ac = if cfg_ac > 0 {
+            let ac = if cfg_user_customized && cfg_ac > 0 {
                 let _ = set_cpu_max_state_ac(cfg_ac);
                 Some(cfg_ac)
             } else {
@@ -888,6 +899,7 @@ impl OptimizerApp {
             let startups = get_startup_apps();
             let prot = get_protection_overview(bg_sys.global_cpu_usage(), startups.len());
             let telem = is_telemetry_active();
+            let dmw = crate::startup::is_dmwappush_active();
             let gdvr = get_gamedvr();
             let fg = get_foreground_process(&bg_sys);
             let cores = format!(
@@ -911,6 +923,7 @@ impl OptimizerApp {
                 startup_apps: startups,
                 protection: prot,
                 is_telemetry_running: telem,
+                is_dmwappush_running: dmw,
                 gamedvr_enabled: !gdvr,
                 cpu_cores_info: cores,
                 dual_batteries: bats,
@@ -1041,7 +1054,7 @@ impl OptimizerApp {
             system_responsiveness_zero: config.system_responsiveness_zero,
             tcp_ecn_enabled: config.tcp_ecn_enabled,
             disable_telemetry: config.disable_telemetry,
-            disable_dmwappush: true,
+            disable_dmwappush: config.disable_dmwappush,
             deep_debloat: config.deep_debloat,
 
             criteria_apply_msg: String::new(),
@@ -1064,6 +1077,7 @@ impl OptimizerApp {
             partition_sub_tab: PartitionSubTab::Info,
             update_available: None,
             last_interaction: Instant::now(),
+            is_creating_restore_point: false,
         }
     }
 
@@ -1115,7 +1129,9 @@ impl OptimizerApp {
         self.config.system_responsiveness_zero = self.system_responsiveness_zero;
         self.config.tcp_ecn_enabled = self.tcp_ecn_enabled;
         self.config.disable_telemetry = self.disable_telemetry;
+        self.config.disable_dmwappush = self.disable_dmwappush;
         self.config.deep_debloat = self.deep_debloat;
+        self.config.user_customized = true;
 
         save_config(&self.config);
     }
@@ -1210,9 +1226,12 @@ impl OptimizerApp {
         set_keep_awake(self.keep_awake_mode);
         if self.protection.is_hibernate_enabled {
             let _ = enable_hibernate_as_admin();
+        } else {
+            let _ = disable_hibernate();
         }
 
         // Nhóm 7: Dịch vụ ngầm, Telemetry & Deep Debloat (3)
+        let _ = crate::startup::toggle_dmwappush(self.disable_dmwappush);
         if is_pro {
             let _ = crate::startup::toggle_telemetry(self.disable_telemetry);
             if self.deep_debloat {
@@ -1255,7 +1274,7 @@ impl OptimizerApp {
             tips.push("Dịch vụ DiagTrack đang chạy nền, khuyến nghị tắt để giảm tải ổ đĩa.".to_string());
         }
 
-        if !self.protection.is_hibernate_enabled {
+        if self.power_status.has_battery && !self.protection.is_hibernate_enabled {
             score -= 10;
             tips.push("Chưa bật Hibernate, laptop có thể hao pin khi ngủ Sleep S3.".to_string());
         }
@@ -1339,23 +1358,44 @@ impl OptimizerApp {
                         self.update_battery_metrics(bats);
                     }
                     // Keep user's saved configurations, or fall back to detected OS values
-                    if let Some(dc) = res.cpu_limit_dc {
-                        if self.config.cpu_limit_dc == 0 {
+                    if !self.config.user_customized {
+                        if let Some(dc) = res.cpu_limit_dc {
                             self.cpu_limit_dc = dc;
+                            self.config.cpu_limit_dc = dc;
                         }
-                    }
-                    if let Some(ac) = res.cpu_limit_ac {
-                        if self.config.cpu_limit_ac == 0 {
+                        if let Some(ac) = res.cpu_limit_ac {
                             self.cpu_limit_ac = ac;
+                            self.config.cpu_limit_ac = ac;
                         }
-                    }
-                    if let Some(cool) = res.cooling_active {
-                        if !self.config.cooling_active {
+                        if let Some(cool) = res.cooling_active {
                             self.cooling_active = cool;
+                            self.config.cooling_active = cool;
                         }
-                    }
-                    if !self.config.gamedvr_enabled {
                         self.gamedvr_enabled = res.gamedvr_enabled;
+                        self.config.gamedvr_enabled = res.gamedvr_enabled;
+                        self.disable_telemetry = !res.is_telemetry_running;
+                        self.config.disable_telemetry = self.disable_telemetry;
+                        self.disable_dmwappush = !res.is_dmwappush_running;
+                        self.config.disable_dmwappush = self.disable_dmwappush;
+                    } else {
+                        if let Some(dc) = res.cpu_limit_dc {
+                            if self.config.cpu_limit_dc == 0 {
+                                self.cpu_limit_dc = dc;
+                            }
+                        }
+                        if let Some(ac) = res.cpu_limit_ac {
+                            if self.config.cpu_limit_ac == 0 {
+                                self.cpu_limit_ac = ac;
+                            }
+                        }
+                        if let Some(cool) = res.cooling_active {
+                            if !self.config.cooling_active {
+                                self.cooling_active = cool;
+                            }
+                        }
+                        if !self.config.gamedvr_enabled {
+                            self.gamedvr_enabled = res.gamedvr_enabled;
+                        }
                     }
 
                     self.autonomous.log(
@@ -1374,6 +1414,19 @@ impl OptimizerApp {
                         format!("Có bản cập nhật mới: {}!", latest_version),
                     );
                     self.update_available = Some((latest_version, download_url));
+                }
+                BackgroundMessage::RestorePointResult(res) => {
+                    self.is_creating_restore_point = false;
+                    match res {
+                        Ok(msg) => {
+                            self.autonomous.log("[KHÔI PHỤC]", msg.clone());
+                            self.criteria_apply_msg = format!("✓ {}", msg);
+                        }
+                        Err(e) => {
+                            self.autonomous.log("[KHÔI PHỤC]", format!("Lỗi tạo điểm khôi phục: {}", e));
+                            self.criteria_apply_msg = format!("✗ {}", e);
+                        }
+                    }
                 }
             }
         }
@@ -3331,8 +3384,8 @@ impl OptimizerApp {
                 if render_switch_chip(
                     ui,
                     &p,
-                    "5. Tự ưu tiên app active",
-                    "Nâng mức ưu tiên AboveNormal cho cửa sổ đang mở",
+                    "5. Tự động chuyển kịch bản theo công việc (AutoPilot)",
+                    "Tự động nhận diện công việc (Game/Code/Văn phòng/Nghỉ) để tối ưu hệ thống",
                     &mut self.autonomous.auto_pilot_enabled,
                     None,
                 ) {
@@ -3472,7 +3525,7 @@ impl OptimizerApp {
                     &mut self.disable_dmwappush,
                     Some(("● ĐÃ TẮT", "○ ĐANG BẬT")),
                 ) {
-                    crate::startup::toggle_telemetry(self.disable_dmwappush);
+                    crate::startup::toggle_dmwappush(self.disable_dmwappush);
                     self.sync_config();
                 }
             },
@@ -3885,8 +3938,21 @@ impl OptimizerApp {
                     &mut self.protection.is_hibernate_enabled,
                     None,
                 ) {
-                    if self.protection.is_hibernate_enabled {
-                        let _ = enable_hibernate_as_admin();
+                    let enable = self.protection.is_hibernate_enabled;
+                    let ok = if enable {
+                        enable_hibernate_as_admin()
+                    } else {
+                        disable_hibernate()
+                    };
+                    if ok {
+                        self.criteria_apply_msg = if enable {
+                            "✓ Đã kích hoạt chế độ Ngủ đông (Hibernate).".to_string()
+                        } else {
+                            "✓ Đã tắt chế độ Ngủ đông (Giải phóng hiberfil.sys).".to_string()
+                        };
+                    } else {
+                        self.protection.is_hibernate_enabled = !enable;
+                        self.criteria_apply_msg = "✗ Thao tác bị từ chối hoặc cần quyền Quản trị viên (UAC).".to_string();
                     }
                 }
             },
@@ -4151,20 +4217,31 @@ impl OptimizerApp {
         render_settings_row!(
             ui,
             |ui| {
+                let btn_text = if self.is_creating_restore_point {
+                    "Đang tạo..."
+                } else {
+                    "Tạo"
+                };
+                let ctx = ui.ctx().clone();
                 render_action_chip(
                     ui,
                     &p,
                     "1. Tạo điểm khôi phục",
                     "Sao lưu trạng thái hệ thống trước khi tinh chỉnh sâu",
-                    "Tạo",
+                    btn_text,
                     || {
-                        if !self.check_pro_gate("Tạo điểm khôi phục") {
+                        if !self.check_pro_gate("Tạo điểm khôi phục") || self.is_creating_restore_point {
                             return;
                         }
-                        match create_restore_point() {
-                            Ok(msg) => self.criteria_apply_msg = format!("✓ {}", msg),
-                            Err(e) => self.criteria_apply_msg = format!("✗ {}", e),
-                        }
+                        self.is_creating_restore_point = true;
+                        self.criteria_apply_msg = "⏳ Đang tạo điểm khôi phục (Vui lòng xác nhận UAC nếu có)...".to_string();
+                        let tx = self.bg_tx.clone();
+                        let ctx_clone = ctx.clone();
+                        std::thread::spawn(move || {
+                            let res = create_restore_point();
+                            let _ = tx.send(BackgroundMessage::RestorePointResult(res));
+                            ctx_clone.request_repaint();
+                        });
                     },
                 );
             },
@@ -4173,7 +4250,7 @@ impl OptimizerApp {
                     ui,
                     &p,
                     "2. Dọn dẹp Dev Cache lập trình",
-                    "Xóa node_modules, Cargo cache, Go build cache, Docker thừa (hàng GB)",
+                    "Dọn sạch cache build và package npm, cargo, pip, go-build",
                     "Dọn ngay",
                     || {
                         if !self.check_pro_gate("Dọn dẹp Dev Cache") {
