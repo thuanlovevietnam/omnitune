@@ -1939,12 +1939,20 @@ impl OptimizerApp {
                     let frac = if d_total > 0 { (d_used as f32 / d_total as f32).clamp(0.0, 1.0) } else { 0.5 };
                     let drv_pct = (frac * 100.0) as u32;
 
+                    let (bar_col, status_badge) = if self.protection.physical_disk_health.eq_ignore_ascii_case("Unhealthy") {
+                        (p.danger_red, " • ✖ SMART Lỗi")
+                    } else if self.protection.physical_disk_health.eq_ignore_ascii_case("Warning") {
+                        (p.warn_amber, " • ▲ SMART Cảnh báo")
+                    } else {
+                        (p.accent_blue, "")
+                    };
+
                     ui.horizontal(|ui| {
-                        ui.heading(RichText::new(format!("{}%", drv_pct)).size(typography::STAT_VALUE).strong().color(p.accent_blue));
-                        ui.label(RichText::new(format!("{} • {}", drv_type, format_bytes(d_total))).size(typography::CHIP_TITLE).strong().color(p.text_primary));
+                        ui.heading(RichText::new(format!("{}%", drv_pct)).size(typography::STAT_VALUE).strong().color(bar_col));
+                        ui.label(RichText::new(format!("{} • {}{}", drv_type, format_bytes(d_total), status_badge)).size(typography::CHIP_TITLE).strong().color(if !status_badge.is_empty() { bar_col } else { p.text_primary }));
                     });
 
-                    render_mini_bar(ui, frac, p.accent_blue, p.tab_inactive_bg);
+                    render_mini_bar(ui, frac, bar_col, p.tab_inactive_bg);
                 },
             );
         });
@@ -2843,8 +2851,17 @@ impl OptimizerApp {
                     .num_columns(2)
                     .spacing(Vec2::new(18.0, 7.0))
                     .show(ui, |ui| {
+                        let display_disk_name = if !self.protection.physical_disk_name.is_empty()
+                            && self.protection.physical_disk_name != "NVMe SSD"
+                            && self.protection.physical_disk_name != "Ổ cứng SSD"
+                            && self.protection.physical_disk_name != "Ổ cứng HDD"
+                        {
+                            &self.protection.physical_disk_name
+                        } else {
+                            &self.autonomous.hardware_profile.disk_name
+                        };
                         ui.label(RichText::new("Ổ đĩa hệ thống:").size(typography::DETAIL_TEXT).color(p.text_secondary));
-                        ui.label(RichText::new(format!("{} ({})", self.autonomous.hardware_profile.disk_name, drv_type)).size(typography::BODY_TEXT).strong().color(p.text_primary));
+                        ui.label(RichText::new(format!("{} ({})", display_disk_name, drv_type)).size(typography::BODY_TEXT).strong().color(p.text_primary));
                         ui.end_row();
 
                         ui.label(RichText::new("Dung lượng bộ nhớ:").size(typography::DETAIL_TEXT).color(p.text_secondary));
