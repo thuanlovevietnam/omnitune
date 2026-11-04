@@ -1,10 +1,11 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(not(test), windows_subsystem = "windows")]
 
 mod app;
 mod autonomous_engine;
 mod battery_info;
 mod battery_limiter;
 mod cleaner;
+pub mod cpu;
 mod eco_qos;
 mod memory;
 mod power;

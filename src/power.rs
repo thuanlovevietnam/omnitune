@@ -76,6 +76,9 @@ pub fn get_active_scheme_name() -> String {
 }
 
 pub fn set_power_scheme(scheme_alias_or_guid: &str) -> bool {
+    if cfg!(test) {
+        return true;
+    }
     Command::new("powercfg")
         .args(["/setactive", scheme_alias_or_guid])
         .creation_flags(CREATE_NO_WINDOW)
@@ -85,20 +88,14 @@ pub fn set_power_scheme(scheme_alias_or_guid: &str) -> bool {
 }
 
 pub fn set_cpu_max_state_dc(percent: u32) -> bool {
-    let pct_str = percent.clamp(50, 100).to_string();
-    let schemes = [
-        "SCHEME_CURRENT",
-        "381b4222-f694-41f0-9685-ff5bb260df2e", // Balanced
-        "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c", // High Performance
-        "a1841308-3541-4fab-bc81-f71556f20b4a", // Power Saver
-    ];
-
-    for s in schemes {
-        let _ = Command::new("powercfg")
-            .args(["/setdcvalueindex", s, "SUB_PROCESSOR", "PROCTHROTTLEMAX", &pct_str])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
+    if cfg!(test) {
+        return true;
     }
+    let pct_str = percent.clamp(50, 100).to_string();
+    let _ = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PROCTHROTTLEMAX", &pct_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
 
     let _ = Command::new("powercfg")
         .args(["/setactive", "SCHEME_CURRENT"])
@@ -109,20 +106,14 @@ pub fn set_cpu_max_state_dc(percent: u32) -> bool {
 }
 
 pub fn set_cpu_max_state_ac(percent: u32) -> bool {
-    let pct_str = percent.clamp(50, 100).to_string();
-    let schemes = [
-        "SCHEME_CURRENT",
-        "381b4222-f694-41f0-9685-ff5bb260df2e", // Balanced
-        "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c", // High Performance
-        "a1841308-3541-4fab-bc81-f71556f20b4a", // Power Saver
-    ];
-
-    for s in schemes {
-        let _ = Command::new("powercfg")
-            .args(["/setacvalueindex", s, "SUB_PROCESSOR", "PROCTHROTTLEMAX", &pct_str])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
+    if cfg!(test) {
+        return true;
     }
+    let pct_str = percent.clamp(50, 100).to_string();
+    let _ = Command::new("powercfg")
+        .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PROCTHROTTLEMAX", &pct_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
 
     let _ = Command::new("powercfg")
         .args(["/setactive", "SCHEME_CURRENT"])
@@ -170,7 +161,17 @@ pub fn get_brightness() -> u32 {
 const POWER_SCHEMES_ROOT: &str = r"SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes";
 const SUB_PROCESSOR_GUID: &str = "54533251-82be-4824-96c1-47b60b740d00";
 const THROTTLE_MAX_GUID: &str = "bc5038f7-23e0-4960-96da-33abaf5935ec";
+#[allow(dead_code)]
+const THROTTLE_MIN_GUID: &str = "893dee8e-2bef-41e0-89c6-b55d0929964c";
 const COOLING_POLICY_GUID: &str = "94d3a615-a899-4ac5-ae2b-e4d8f634367f";
+#[allow(dead_code)]
+const PERFEPP_GUID: &str = "36687f9e-e3a5-4dbf-b1dc-15eb381c6863";
+#[allow(dead_code)]
+const PERFBOOSTMODE_GUID: &str = "be337238-0d82-4146-a960-4f3749d470c7";
+#[allow(dead_code)]
+const CPMINCORES_GUID: &str = "0cc5b647-c1df-4637-891a-dec35c318583";
+#[allow(dead_code)]
+const SCHEDPOLICY_GUID: &str = "93b8b6dc-0698-4d1c-9ee4-0644e900c85d";
 
 pub fn get_active_power_scheme_guid() -> Option<String> {
     crate::reg::reg_read_string(
@@ -269,6 +270,9 @@ pub fn get_cpu_max_state_ac() -> u32 {
 }
 
 pub fn set_cooling_policy(active: bool) -> bool {
+    if cfg!(test) {
+        return true;
+    }
     let val = if active { "1" } else { "0" };
     let res1 = Command::new("powercfg")
         .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "SYSCOOLPOL", val])
@@ -312,6 +316,341 @@ pub fn get_cooling_policy() -> bool {
         }
     }
     true
+}
+
+// ==================== CPU SUB_PROCESSOR DEEP TUNING ====================
+
+pub fn apply_cpu_deep_tuning(
+    epp: Option<u32>,
+    boost_mode: Option<u32>,
+    core_parking_min: Option<u32>,
+    hetero_sched: Option<u32>,
+) -> bool {
+    if cfg!(test) {
+        return true;
+    }
+    if let Some(e) = epp {
+        let e_str = e.clamp(0, 100).to_string();
+        let _ = Command::new("powercfg")
+            .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFEPP", &e_str])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        let _ = Command::new("powercfg")
+            .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFEPP", &e_str])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    if let Some(b) = boost_mode {
+        let b_str = b.clamp(0, 6).to_string();
+        let _ = Command::new("powercfg")
+            .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFBOOSTMODE", &b_str])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        let _ = Command::new("powercfg")
+            .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFBOOSTMODE", &b_str])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    if let Some(cp) = core_parking_min {
+        let cp_str = cp.clamp(0, 100).to_string();
+        let _ = Command::new("powercfg")
+            .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "CPMINCORES", &cp_str])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        let _ = Command::new("powercfg")
+            .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "CPMINCORES", &cp_str])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    if let Some(h) = hetero_sched {
+        let h_str = h.clamp(0, 5).to_string();
+        let _ = Command::new("powercfg")
+            .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "SCHEDPOLICY", &h_str])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        let _ = Command::new("powercfg")
+            .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "SCHEDPOLICY", &h_str])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+
+    true
+}
+
+pub fn apply_cpu_deep_tuning_dc(
+    dc_max_pct: u32,
+    epp: u32,
+    boost_mode: u32,
+    core_parking_min: u32,
+) -> bool {
+    if cfg!(test) {
+        return true;
+    }
+    let dc_str = dc_max_pct.clamp(50, 100).to_string();
+    let e_str = epp.clamp(0, 100).to_string();
+    let b_str = boost_mode.clamp(0, 6).to_string();
+    let cp_str = core_parking_min.clamp(0, 100).to_string();
+
+    let _ = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PROCTHROTTLEMAX", &dc_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFEPP", &e_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFBOOSTMODE", &b_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "CPMINCORES", &cp_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+
+    true
+}
+
+#[allow(dead_code)]
+pub fn set_cpu_epp_dc(percent: u32) -> bool {
+    let p_str = percent.clamp(0, 100).to_string();
+    let res = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFEPP", &p_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    res
+}
+
+#[allow(dead_code)]
+pub fn set_cpu_epp_ac(percent: u32) -> bool {
+    let p_str = percent.clamp(0, 100).to_string();
+    let res = Command::new("powercfg")
+        .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFEPP", &p_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    res
+}
+
+#[allow(dead_code)]
+pub fn set_cpu_epp(percent: u32) -> bool {
+    let p_str = percent.clamp(0, 100).to_string();
+    let _ = Command::new("powercfg")
+        .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFEPP", &p_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFEPP", &p_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    true
+}
+
+#[allow(dead_code)]
+pub fn get_cpu_epp() -> (Option<u32>, Option<u32>) {
+    let ac = get_power_setting_registry(SUB_PROCESSOR_GUID, PERFEPP_GUID, "ACSettingIndex");
+    let dc = get_power_setting_registry(SUB_PROCESSOR_GUID, PERFEPP_GUID, "DCSettingIndex");
+    if ac.is_some() || dc.is_some() {
+        return (ac, dc);
+    }
+    let output = Command::new("powercfg")
+        .args(["/qh", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFEPP"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        return parse_powercfg_output(&text);
+    }
+    (None, None)
+}
+
+#[allow(dead_code)]
+pub fn set_cpu_boost_mode_dc(mode: u32) -> bool {
+    let m_str = mode.clamp(0, 6).to_string();
+    let res = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFBOOSTMODE", &m_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    res
+}
+
+#[allow(dead_code)]
+pub fn set_cpu_boost_mode_ac(mode: u32) -> bool {
+    let m_str = mode.clamp(0, 6).to_string();
+    let res = Command::new("powercfg")
+        .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFBOOSTMODE", &m_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    res
+}
+
+#[allow(dead_code)]
+pub fn set_cpu_boost_mode(mode: u32) -> bool {
+    let m_str = mode.clamp(0, 6).to_string();
+    let _ = Command::new("powercfg")
+        .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFBOOSTMODE", &m_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFBOOSTMODE", &m_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    true
+}
+
+#[allow(dead_code)]
+pub fn get_cpu_boost_mode() -> (Option<u32>, Option<u32>) {
+    let ac = get_power_setting_registry(SUB_PROCESSOR_GUID, PERFBOOSTMODE_GUID, "ACSettingIndex");
+    let dc = get_power_setting_registry(SUB_PROCESSOR_GUID, PERFBOOSTMODE_GUID, "DCSettingIndex");
+    if ac.is_some() || dc.is_some() {
+        return (ac, dc);
+    }
+    let output = Command::new("powercfg")
+        .args(["/qh", "SCHEME_CURRENT", "SUB_PROCESSOR", "PERFBOOSTMODE"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        return parse_powercfg_output(&text);
+    }
+    (None, None)
+}
+
+#[allow(dead_code)]
+pub fn set_cpu_core_parking_min_dc(percent: u32) -> bool {
+    let p_str = percent.clamp(0, 100).to_string();
+    let res = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "CPMINCORES", &p_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    res
+}
+
+#[allow(dead_code)]
+pub fn set_cpu_core_parking_min_ac(percent: u32) -> bool {
+    let p_str = percent.clamp(0, 100).to_string();
+    let res = Command::new("powercfg")
+        .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "CPMINCORES", &p_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    res
+}
+
+#[allow(dead_code)]
+pub fn set_cpu_core_parking_min(percent: u32) -> bool {
+    let p_str = percent.clamp(0, 100).to_string();
+    let _ = Command::new("powercfg")
+        .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "CPMINCORES", &p_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "CPMINCORES", &p_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    true
+}
+
+#[allow(dead_code)]
+pub fn get_cpu_core_parking_min() -> (Option<u32>, Option<u32>) {
+    let ac = get_power_setting_registry(SUB_PROCESSOR_GUID, CPMINCORES_GUID, "ACSettingIndex");
+    let dc = get_power_setting_registry(SUB_PROCESSOR_GUID, CPMINCORES_GUID, "DCSettingIndex");
+    if ac.is_some() || dc.is_some() {
+        return (ac, dc);
+    }
+    let output = Command::new("powercfg")
+        .args(["/qh", "SCHEME_CURRENT", "SUB_PROCESSOR", "CPMINCORES"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        return parse_powercfg_output(&text);
+    }
+    (None, None)
+}
+
+#[allow(dead_code)]
+pub fn set_hetero_sched_policy(policy: u32) -> bool {
+    let p_str = policy.clamp(0, 5).to_string();
+    let _ = Command::new("powercfg")
+        .args(["/setacvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "SCHEDPOLICY", &p_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("powercfg")
+        .args(["/setdcvalueindex", "SCHEME_CURRENT", "SUB_PROCESSOR", "SCHEDPOLICY", &p_str])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = Command::new("powercfg")
+        .args(["/setactive", "SCHEME_CURRENT"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    true
+}
+
+pub fn set_win32_priority_separation_val(val: u32) -> bool {
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    crate::reg::reg_set_u32(
+        HKEY_LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Control\PriorityControl",
+        "Win32PrioritySeparation",
+        val,
+    )
 }
 
 pub fn set_gamedvr(enable: bool) -> bool {
@@ -493,6 +832,9 @@ pub fn set_keep_awake(mode: u8) {
 }
 
 pub fn apply_permanent_windows_system_tweaks() {
+    if cfg!(test) {
+        return;
+    }
     use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 
     // 1. Permanent Foreground Priority Separation (38 = Max Quantum Boost for active apps)
@@ -537,6 +879,9 @@ pub fn apply_permanent_windows_system_tweaks() {
 }
 
 pub fn set_tcp_optimization(enable: bool) -> bool {
+    if cfg!(test) {
+        return true;
+    }
     let level = if enable { "autotuninglevel=normal" } else { "autotuninglevel=disabled" };
     Command::new("netsh")
         .args(["int", "tcp", "set", "global", level])
@@ -601,14 +946,8 @@ pub fn set_cpu_min_state(percent: u32) -> bool {
 }
 
 pub fn set_win32_priority_separation(boost: bool) -> bool {
-    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
     let val = if boost { 38 } else { 2 };
-    crate::reg::reg_set_u32(
-        HKEY_LOCAL_MACHINE,
-        r"SYSTEM\CurrentControlSet\Control\PriorityControl",
-        "Win32PrioritySeparation",
-        val,
-    )
+    set_win32_priority_separation_val(val)
 }
 
 pub fn set_fast_shutdown_recovery(enable: bool) -> bool {
@@ -792,5 +1131,15 @@ mod tests {
         let (ac, dc) = parse_powercfg_output(zh_output);
         assert_eq!(ac, Some(100));
         assert_eq!(dc, Some(80));
+    }
+
+    #[test]
+    fn test_cpu_subprocessor_settings_read() {
+        let (epp_ac, epp_dc) = get_cpu_epp();
+        println!("EPP: AC={:?}, DC={:?}", epp_ac, epp_dc);
+        let (bm_ac, bm_dc) = get_cpu_boost_mode();
+        println!("Boost Mode: AC={:?}, DC={:?}", bm_ac, bm_dc);
+        let (cp_ac, cp_dc) = get_cpu_core_parking_min();
+        println!("Core Parking: AC={:?}, DC={:?}", cp_ac, cp_dc);
     }
 }

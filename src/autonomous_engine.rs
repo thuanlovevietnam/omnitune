@@ -1,5 +1,5 @@
 use crate::cleaner::format_bytes;
-use crate::eco_qos::{apply_foreground_boost_and_eco, get_foreground_process};
+use crate::eco_qos::get_foreground_process;
 use crate::hardware_profile::{get_user_idle_ms, HardwareProfile};
 use crate::memory::trim_working_sets;
 use crate::scenarios::{apply_scenario, detect_recommended_scenario, Scenario};
@@ -272,15 +272,27 @@ impl AutonomousEngine {
 
             // Áp dụng EcoQoS cho các app nền
             if self.eco_qos_enabled {
-                let (boosted, eco_count) = apply_foreground_boost_and_eco(sys, fg_pid);
+                let (boosted, eco_count) = crate::eco_qos::apply_foreground_boost_and_eco_with_topology(
+                    sys,
+                    fg_pid,
+                    Some(&self.hardware_profile.cpu_topology),
+                );
                 if let Some((pid, ref name)) = fg {
                     if self.is_pro {
-                        crate::eco_qos::apply_pro_foreground_boost(pid, self.hardware_profile.cpu_logical_cores);
+                        let is_gaming = self.current_scenario == Scenario::Gaming;
+                        crate::eco_qos::apply_pro_foreground_boost_with_topology(
+                            pid,
+                            &self.hardware_profile.cpu_topology,
+                            is_gaming,
+                        );
                         self.log(
                             "[PRO VIP]",
                             format!(
-                                "Ưu tiên tối đa '{}' (High Priority, {} nhân CPU, hạ tải {} app nền).",
-                                name, self.hardware_profile.cpu_logical_cores, eco_count
+                                "Ưu tiên tối đa '{}' (High Priority, {} [{}], hạ tải {} app nền).",
+                                name,
+                                self.hardware_profile.cpu_topology.topology_summary,
+                                if is_gaming { "DPC Safe" } else { "All Cores" },
+                                eco_count
                             ),
                         );
                     } else if eco_count > 0 {

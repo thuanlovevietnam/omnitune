@@ -354,6 +354,9 @@ pub fn set_intel_igpu_vram(size_mb: u32) -> bool {
 
 // 9. PCIe Link State Power Management (ASPM)
 pub fn set_pcie_aspm(level: u32, is_ac: bool) -> bool {
+    if cfg!(test) {
+        return true;
+    }
     let pcie_sub = "501a4d13-42af-4429-9fd1-a8218c268e20";
     let pcie_setting = "ee12f906-d277-404b-b6da-e5fa1a576df5";
     let val_str = level.to_string();
@@ -375,6 +378,9 @@ pub fn set_pcie_aspm(level: u32, is_ac: bool) -> bool {
 
 // 10. Vendor Graphics Power Plan (Chỉ thực thi khi nhà sản xuất đó có mặt trên máy)
 pub fn set_vendor_graphics_power(vendor: GpuVendor, high_perf: bool, is_ac: bool) {
+    if cfg!(test) {
+        return;
+    }
     let flag = if is_ac { "/setacvalueindex" } else { "/setdcvalueindex" };
 
     match vendor {
@@ -403,6 +409,9 @@ pub fn set_vendor_graphics_power(vendor: GpuVendor, high_perf: bool, is_ac: bool
 // 11. Orchestrator cho Hardware Profile Optimal (Tuân theo thông tin phần cứng máy)
 pub fn apply_hardware_gpu_optimal(hw: &HardwareProfile, is_ac: bool, battery_pct: u8) -> Vec<String> {
     let mut msgs = Vec::new();
+    if cfg!(test) {
+        return msgs;
+    }
     let vendor = detect_vendor(&hw.gpu_name);
 
     // DirectX FSE & Game Mode (cấu hình theo OS Build máy)
@@ -468,6 +477,9 @@ pub fn apply_hardware_gpu_optimal(hw: &HardwareProfile, is_ac: bool, battery_pct
 // 12. Orchestrator cho Scenario Gaming & Graphics
 pub fn apply_scenario_gaming_gpu(hw: &HardwareProfile, _is_pro: bool, sys: &System) -> Vec<String> {
     let mut msgs = Vec::new();
+    if cfg!(test) {
+        return msgs;
+    }
     let vendor = detect_vendor(&hw.gpu_name);
 
     // Bật DirectX FSE & Game Mode
@@ -504,6 +516,9 @@ pub fn apply_scenario_gaming_gpu(hw: &HardwareProfile, _is_pro: bool, sys: &Syst
 // 13. Orchestrator cho Scenario MediaChill (Hardware Video Acceleration)
 pub fn apply_scenario_media_gpu(hw: &HardwareProfile, is_ac: bool, sys: &System) -> Vec<String> {
     let mut msgs = Vec::new();
+    if cfg!(test) {
+        return msgs;
+    }
     let vendor = detect_vendor(&hw.gpu_name);
 
     // MMCSS Playback Task GPU Priority
@@ -573,6 +588,9 @@ pub fn apply_scenario_remote_gpu() -> Vec<String> {
 // 16. Tiết kiệm điện tối đa cho GPU khi chạy pin / nhàn rỗi (RTD3)
 pub fn apply_gpu_power_save(hw: &HardwareProfile) -> Vec<String> {
     let mut msgs = Vec::new();
+    if cfg!(test) {
+        return msgs;
+    }
     let vendor = detect_vendor(&hw.gpu_name);
 
     // Hạ GPU Priority về bình thường

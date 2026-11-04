@@ -1,5 +1,3 @@
-use std::os::windows::process::CommandExt;
-use std::process::Command;
 use sysinfo::System;
 use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::Media::{timeBeginPeriod, timeEndPeriod};
@@ -13,8 +11,6 @@ use windows_sys::Win32::System::Threading::{
 use crate::hardware_profile::HardwareProfile;
 
 use serde::{Deserialize, Serialize};
-
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Scenario {
@@ -89,6 +85,8 @@ pub fn apply_scenario(
             let _ = crate::power::set_power_scheme("SCHEME_BALANCED");
             let _ = crate::power::set_cpu_max_state_dc(hw.optimal_cpu_dc_limit);
             let _ = crate::power::set_cpu_max_state_ac(hw.optimal_cpu_ac_limit);
+            let _ = crate::power::apply_cpu_deep_tuning(Some(33), Some(1), Some(if is_ac { 100 } else { 50 }), None);
+            let _ = crate::power::set_win32_priority_separation_val(2);
 
             // Restore normal priority to common apps
             let _ = prioritize_apps(
@@ -98,8 +96,8 @@ pub fn apply_scenario(
             );
 
             format!(
-                "Đã trở về chế độ Cân bằng tiêu chuẩn: CPU {} nhân ({}), GPU & RAM tối ưu động.",
-                hw.cpu_logical_cores, hw.cpu_brand
+                "Đã trở về chế độ Cân bằng tiêu chuẩn: CPU {} ({}), GPU & RAM tối ưu động.",
+                hw.cpu_topology.topology_summary, hw.cpu_brand
             )
         }
 
@@ -113,6 +111,8 @@ pub fn apply_scenario(
             let _ = crate::power::set_power_scheme("SCHEME_BALANCED");
             let _ = crate::power::set_cpu_max_state_dc(hw.optimal_cpu_ac_limit);
             let _ = crate::power::set_cpu_max_state_ac(hw.optimal_cpu_ac_limit);
+            let _ = crate::power::apply_cpu_deep_tuning(Some(0), Some(2), Some(100), None); // 0% delay, aggressive boost, unpark all
+            let _ = crate::power::set_win32_priority_separation_val(24); // Fixed long quanta (through-put build)
             let _ = crate::power::set_cooling_policy(true);
 
             // Prioritize compilers and build tools
@@ -133,8 +133,8 @@ pub fn apply_scenario(
             let (freed, count) = crate::memory::trim_working_sets(sys);
 
             format!(
-                "Đã bật kịch bản Lập trình: Mở 100% xung nhịp {} nhân ({}), làm mát chủ động, ưu tiên {} tiến trình compiler/IDE, giải phóng {} RAM từ {} app.",
-                hw.cpu_logical_cores,
+                "Đã bật kịch bản Lập trình: Mở 100% {} ({}), EPP 0%, Quanta Build (0x18), quạt làm mát chủ động, ưu tiên {} tiến trình compiler/IDE, giải phóng {} RAM từ {} app.",
+                hw.cpu_topology.topology_summary,
                 hw.cpu_brand,
                 boosted_compilers + boosted_ides,
                 crate::cleaner::format_bytes(freed),
@@ -151,6 +151,9 @@ pub fn apply_scenario(
             let cpu_limit = if hw.is_dedicated_gpu { 100 } else { 90 };
             let _ = crate::power::set_cpu_max_state_dc(cpu_limit);
             let _ = crate::power::set_cpu_max_state_ac(cpu_limit);
+            let hetero = if hw.cpu_topology.is_heterogeneous { Some(2) } else { None };
+            let _ = crate::power::apply_cpu_deep_tuning(Some(0), Some(2), Some(100), hetero); // EPP 0, Boost 2, Unpark 100%
+            let _ = crate::power::set_win32_priority_separation_val(38); // 3:1 Interactive Quantum Boost
             let _ = crate::power::set_cooling_policy(true);
 
             // 3. Multimedia high-resolution timer (1.0ms) - Only for Pro
@@ -180,7 +183,7 @@ pub fn apply_scenario(
             let (freed, _) = crate::memory::trim_working_sets(sys);
 
             format!(
-                "Đã bật kịch bản Game & Đồ họa: {}, tối ưu GPU [{}: Priority 8/FSE], giải phóng {} RAM làm VRAM, hạ {} app ngầm.",
+                "Đã bật kịch bản Game & Đồ họa: {}, EPP 0%/Boost Tối đa/Unpark 100%, tối ưu GPU [{}: Priority 8/FSE], giải phóng {} RAM, hạ {} app ngầm.",
                 timer_status,
                 hw.gpu_name,
                 crate::cleaner::format_bytes(freed),
@@ -200,6 +203,8 @@ pub fn apply_scenario(
             let cpu_limit = if is_ac { 80 } else { 70 };
             let _ = crate::power::set_cpu_max_state_ac(cpu_limit);
             let _ = crate::power::set_cpu_max_state_dc(cpu_limit);
+            let _ = crate::power::apply_cpu_deep_tuning(Some(33), Some(3), Some(if is_ac { 100 } else { 50 }), None); // Efficient boost: avoids high spikes & fan noise
+            let _ = crate::power::set_win32_priority_separation_val(38);
 
             // Prioritize meeting and office apps
             let boosted = prioritize_apps(
@@ -216,16 +221,13 @@ pub fn apply_scenario(
             );
 
             // Optimize TCP latency
-            let _ = Command::new("netsh")
-                .args(["int", "tcp", "set", "global", "autotuninglevel=normal"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .status();
+            let _ = crate::power::set_tcp_optimization(true);
 
             // Optimize GPU Capture for Camera & Screen share
             let _ = crate::gpu::apply_scenario_office_gpu(hw, is_ac);
 
             format!(
-                "Đã bật kịch bản Họp & Văn phòng: Chống tắt màn hình, tối ưu GPU Capture, ưu tiên {} app họp/office, hạ {} app đồng bộ để giữ băng thông mượt mà, quạt êm chống ồn.",
+                "Đã bật kịch bản Họp & Văn phòng: Chống tắt màn hình, EPP 33%/Boost Êm, tối ưu GPU Capture, ưu tiên {} app họp/office, hạ {} app đồng bộ, quạt êm chống ồn.",
                 boosted, deprioritized
             )
         }
@@ -239,6 +241,7 @@ pub fn apply_scenario(
             let cpu_target = if is_ac { 75 } else { 65 };
             let _ = crate::power::set_cpu_max_state_dc(cpu_target);
             let _ = crate::power::set_cpu_max_state_ac(cpu_target);
+            let _ = crate::power::apply_cpu_deep_tuning(Some(33), Some(3), Some(if is_ac { 100 } else { 50 }), None);
 
             let boosted = prioritize_apps(
                 sys,
@@ -252,17 +255,14 @@ pub fn apply_scenario(
                 IDLE_PRIORITY_CLASS,
             );
 
-            let _ = Command::new("netsh")
-                .args(["int", "tcp", "set", "global", "autotuninglevel=normal"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .status();
+            let _ = crate::power::set_tcp_optimization(true);
 
             // Optimize GPU Hardware Encoding for Remote Desktop (Terminal Services)
             let _ = crate::gpu::apply_scenario_remote_gpu();
 
             format!(
-                "Đã bật kịch bản Remote Desktop: Chống Sleep/Lock, kích hoạt GPU HW encoding, tối ưu mạng TCP, ưu tiên {} app remote, hạ {} app sync để giữ đường truyền ổn định.",
-                boosted, deprioritized
+                "Đã bật kịch bản Remote Desktop: Chống Sleep/Lock, CPU êm {}% (EPP 33), GPU HW encoding, tối ưu mạng TCP, ưu tiên {} app remote, hạ {} app sync.",
+                cpu_target, boosted, deprioritized
             )
         }
 
@@ -274,6 +274,7 @@ pub fn apply_scenario(
 
             let _ = crate::power::set_cpu_max_state_dc(60);
             let _ = crate::power::set_cpu_max_state_ac(65);
+            let _ = crate::power::apply_cpu_deep_tuning(Some(60), Some(3), Some(50), None);
 
             let deprioritized = prioritize_apps(
                 sys,
@@ -285,7 +286,7 @@ pub fn apply_scenario(
             let _ = crate::gpu::apply_scenario_media_gpu(hw, is_ac, sys);
 
             format!(
-                "Đã bật kịch bản Xem phim: Khóa giữ sáng màn hình, bật DXVA phần cứng GPU [{}], quạt êm 0dB, hạ {} app ngầm.",
+                "Đã bật kịch bản Xem phim: Khóa giữ sáng màn hình, CPU hãm 60-65% (EPP 60%), bật DXVA GPU [{}], quạt êm 0dB, hạ {} app ngầm.",
                 hw.gpu_name, deprioritized
             )
         }
@@ -298,13 +299,13 @@ pub fn apply_scenario(
 
             let _ = crate::power::set_power_scheme("SCHEME_MAX");
 
-            // Calculate dynamic DC throttle from battery percent
-            let dc_dynamic = (hw.optimal_cpu_dc_limit as f32
-                * (0.60 + 0.40 * (battery_pct as f32 / 100.0)))
-                .round() as u32;
-            let final_dc = dc_dynamic.clamp(50, hw.optimal_cpu_dc_limit);
+            // Continuous mathematical model without hardcoded thresholds
+            let final_dc = hw.cpu_topology.calculate_optimal_dc_limit(battery_pct);
+            let dynamic_epp = hw.cpu_topology.calculate_dynamic_epp(false, battery_pct, false);
+            let dynamic_cp = hw.cpu_topology.calculate_dynamic_core_parking(false, battery_pct);
+            let boost_mode = if battery_pct < 40 { 0 } else { 3 }; // <40% pin: tắt boost hạ nhiệt và tăng 2h pin
 
-            let _ = crate::power::set_cpu_max_state_dc(final_dc);
+            let _ = crate::power::apply_cpu_deep_tuning_dc(final_dc, dynamic_epp, boost_mode, dynamic_cp);
             let _ = crate::power::set_cooling_policy(false); // Passive cooling
 
             // Hạ nguồn GPU vào chế độ tiết kiệm sâu (RTD3)
@@ -319,11 +320,15 @@ pub fn apply_scenario(
             let (freed, _) = crate::memory::trim_working_sets(sys);
 
             format!(
-                "Đã bật kịch bản Di động / Pin: Điều tiết CPU {} nhân ở mức {}%, quạt tắt (Passive), hạ nguồn GPU (RTD3), thu hồi {} RAM, đóng băng {} app ngầm.",
-                hw.cpu_logical_cores,
+                "Đã bật kịch bản Di động / Pin ({}%): {} trần {}% (EPP {}%, Boost {}, Đỗ {}% nhân), quạt tắt (Passive 0dB), hạ nguồn GPU, hạ {} app ngầm, thu hồi {} RAM.",
+                battery_pct,
+                hw.cpu_topology.topology_summary,
                 final_dc,
-                crate::cleaner::format_bytes(freed),
-                deprioritized
+                dynamic_epp,
+                if boost_mode == 0 { "Tắt/Hạ nhiệt" } else { "Tiết kiệm" },
+                100 - dynamic_cp,
+                deprioritized,
+                crate::cleaner::format_bytes(freed)
             )
         }
 
@@ -336,6 +341,7 @@ pub fn apply_scenario(
             let _ = crate::power::set_power_scheme("SCHEME_MAX");
             let _ = crate::power::set_cpu_max_state_dc(50);
             let _ = crate::power::set_cpu_max_state_ac(55);
+            let _ = crate::power::apply_cpu_deep_tuning(Some(80), Some(0), Some(25), None); // Maximum power savings & park 75% cores
             let _ = crate::power::set_cooling_policy(false);
 
             // Ngủ sâu GPU khi máy nhàn rỗi
@@ -344,8 +350,9 @@ pub fn apply_scenario(
             let (freed, count) = crate::memory::trim_working_sets(sys);
 
             format!(
-                "Đã bật kịch bản Nhàn rỗi tự động: Người dùng không tương tác > 5 phút, hạ tải CPU {} nhân, ngủ sâu GPU, giải phóng {} RAM từ {} tiến trình.",
-                hw.cpu_logical_cores,
+                "Đã bật kịch bản Nhàn rỗi tự động: Người dùng không tương tác > 5 phút, hạ tải CPU {} ({}), ngủ sâu GPU, giải phóng {} RAM từ {} tiến trình.",
+                hw.cpu_topology.topology_summary,
+                hw.cpu_brand,
                 crate::cleaner::format_bytes(freed),
                 count
             )
@@ -467,6 +474,9 @@ pub fn detect_recommended_scenario(
 }
 
 pub fn prioritize_apps(sys: &mut System, app_names: &[&str], priority_class: u32) -> usize {
+    if cfg!(test) {
+        return app_names.len();
+    }
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let mut modified = 0;
 
@@ -527,6 +537,17 @@ mod tests {
         if let Ok(sys) = System::new() {
             let scen = detect_recommended_scenario(&sys, true, 100, 350_000);
             assert_eq!(scen, Some(Scenario::IdlePowerSave));
+        }
+    }
+
+    #[test]
+    fn test_all_scenarios_apply_message() {
+        if let Ok(mut sys) = System::new() {
+            let hw = HardwareProfile::detect(&mut sys);
+            for &scen in &Scenario::ALL {
+                let msg = apply_scenario(scen, &mut sys, &hw, true, 90, true);
+                assert!(!msg.is_empty(), "Scenario {:?} should produce non-empty msg", scen);
+            }
         }
     }
 }

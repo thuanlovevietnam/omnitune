@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use sysinfo::{Pid, System};
 use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, SetPriorityClass, SetProcessAffinityMask,
+    OpenProcess, QueryFullProcessImageNameW, SetPriorityClass,
     SetProcessInformation, ABOVE_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS,
     PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
     PROCESS_POWER_THROTTLING_STATE, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
@@ -252,9 +252,41 @@ pub fn set_process_eco_mode(pid: u32, enable_eco: bool) -> bool {
     }
 }
 
+pub fn is_core_system_process(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let clean = lower.trim_end_matches(".exe");
+    matches!(
+        clean,
+        "dwm"
+            | "explorer"
+            | "services"
+            | "lsass"
+            | "csrss"
+            | "smss"
+            | "winlogon"
+            | "fontdrvhost"
+            | "audiodg"
+            | "spoolsv"
+            | "taskhostw"
+            | "system"
+            | "registry"
+            | "idle"
+            | "omnitune"
+    )
+}
+
+#[allow(dead_code)]
 pub fn apply_foreground_boost_and_eco(
     sys: &System,
     fg_pid: Option<u32>,
+) -> (usize, usize) {
+    apply_foreground_boost_and_eco_with_topology(sys, fg_pid, None)
+}
+
+pub fn apply_foreground_boost_and_eco_with_topology(
+    sys: &System,
+    fg_pid: Option<u32>,
+    topo: Option<&crate::cpu::CpuTopology>,
 ) -> (usize, usize) {
     let mut boosted = 0;
     let mut eco_throttled = 0;
@@ -281,9 +313,12 @@ pub fn apply_foreground_boost_and_eco(
         if set_process_eco_mode(pid, false) {
             boosted += 1;
         }
+        if let Some(t) = topo {
+            t.boost_compilation_process(pid); // Khôi phục affinity toàn bộ nhân
+        }
     }
 
-    // 2. Target heavy background candidate names for EcoQoS (excluding focus family)
+    // 2. Behavioral EcoQoS: Target background candidate names OR background processes using > 1.5% CPU
     for (&pid, proc) in sys.processes() {
         let raw_pid = pid.as_u32();
         if raw_pid <= 4 || raw_pid == my_pid || focus_family.contains(&raw_pid) {
@@ -291,17 +326,29 @@ pub fn apply_foreground_boost_and_eco(
         }
 
         let name = proc.name().to_string_lossy().to_lowercase();
-        let should_eco = ECO_CANDIDATES.iter().any(|&c| name.contains(c));
+        if is_core_system_process(&name) {
+            continue;
+        }
 
-        if should_eco && set_process_eco_mode(raw_pid, true) {
+        let is_candidate = ECO_CANDIDATES.iter().any(|&c| name.contains(c));
+        let is_high_cpu_bg = proc.cpu_usage() > 1.5;
+
+        if (is_candidate || is_high_cpu_bg) && set_process_eco_mode(raw_pid, true) {
             eco_throttled += 1;
+            if let Some(t) = topo {
+                t.throttle_background_process(raw_pid); // Ép chạy trên E-core hoặc nửa sau nhân
+            }
         }
     }
 
     (boosted, eco_throttled)
 }
 
-pub fn apply_pro_foreground_boost(pid: u32, total_cores: usize) -> bool {
+pub fn apply_pro_foreground_boost_with_topology(
+    pid: u32,
+    topo: &crate::cpu::CpuTopology,
+    is_gaming: bool,
+) -> bool {
     if pid <= 4 {
         return false;
     }
@@ -310,23 +357,21 @@ pub fn apply_pro_foreground_boost(pid: u32, total_cores: usize) -> bool {
         if handle.is_null() {
             return false;
         }
-
-        // Cấp High Priority Class cho ứng dụng đang focus
         let _ = SetPriorityClass(handle, HIGH_PRIORITY_CLASS);
-
-        // Gán CPU Affinity toàn bộ core logic
-        if total_cores > 0 {
-            let mask = if total_cores >= (std::mem::size_of::<usize>() * 8) {
-                usize::MAX
-            } else {
-                (1usize << total_cores).wrapping_sub(1)
-            };
-            let _ = SetProcessAffinityMask(handle, mask);
-        }
-
         CloseHandle(handle);
-        true
     }
+
+    if is_gaming {
+        topo.boost_gaming_process(pid)
+    } else {
+        topo.boost_compilation_process(pid)
+    }
+}
+
+#[allow(dead_code)]
+pub fn apply_pro_foreground_boost(pid: u32, _total_cores: usize) -> bool {
+    let topo = crate::cpu::CpuTopology::probe();
+    apply_pro_foreground_boost_with_topology(pid, &topo, false)
 }
 
 #[cfg(test)]

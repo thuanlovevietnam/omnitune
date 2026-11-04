@@ -4,7 +4,10 @@ use crate::cleaner::{
     clean_target, format_bytes, get_default_targets, scan_target,
 };
 use crate::config::{load_config, save_config, set_autostart_registry, AppConfig};
-use crate::eco_qos::{apply_foreground_boost_and_eco, get_foreground_process};
+use crate::eco_qos::{
+    apply_foreground_boost_and_eco_with_topology, apply_pro_foreground_boost_with_topology,
+    get_foreground_process,
+};
 use crate::licensing::{
     deactivate_license, format_remaining_trial, get_trial_status, is_pro_active, load_license,
     save_license, start_trial, LicenseData, TrialStatus,
@@ -40,6 +43,7 @@ pub enum BackgroundMessage {
     BatteryUpdate(Vec<BatteryDetails>),
     UpdateAvailable { latest_version: String, download_url: String },
     RestorePointResult(Result<String, String>),
+    JunkScanResult(Vec<(usize, u64, usize)>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,6 +325,7 @@ pub struct OptimizerApp {
     last_refresh: Instant,
     last_process_refresh: Instant,
     last_battery_poll: Instant,
+    last_disk_refresh: Instant,
 
     // Background hardware worker
     bg_tx: Sender<BackgroundMessage>,
@@ -902,11 +907,8 @@ impl OptimizerApp {
             let dmw = crate::startup::is_dmwappush_active();
             let gdvr = get_gamedvr();
             let fg = get_foreground_process(&bg_sys);
-            let cores = format!(
-                "{} nhân • {} luồng",
-                sysinfo::System::physical_core_count().unwrap_or(2),
-                bg_sys.cpus().len()
-            );
+            let cpu_topo = crate::cpu::CpuTopology::probe();
+            let cores = cpu_topo.topology_summary.clone();
 
             let bats = if has_battery {
                 Some(get_dual_battery_info())
@@ -933,6 +935,18 @@ impl OptimizerApp {
                 foreground_info: fg,
                 scan_duration_ms: dur_ms,
             }));
+        });
+
+        // Background scan of junk/cache categories so Drive tab displays real sizes instantly
+        let bg_tx_junk = bg_tx.clone();
+        std::thread::spawn(move || {
+            let targets = get_default_targets();
+            let mut results = Vec::with_capacity(targets.len());
+            for (i, target) in targets.iter().enumerate() {
+                let (size, count) = scan_target(target);
+                results.push((i, size, count));
+            }
+            let _ = bg_tx_junk.send(BackgroundMessage::JunkScanResult(results));
         });
 
         // Background update check against GitHub releases
@@ -1084,6 +1098,7 @@ impl OptimizerApp {
                 .checked_sub(Duration::from_millis(1500))
                 .unwrap_or_else(Instant::now),
             last_battery_poll: Instant::now(),
+            last_disk_refresh: Instant::now(),
             bg_tx,
             bg_rx,
             bg_fetch_in_progress: true,
@@ -1440,23 +1455,39 @@ impl OptimizerApp {
                         }
                     }
                 }
+                BackgroundMessage::JunkScanResult(results) => {
+                    for (i, size, count) in results {
+                        if let Some(cat) = self.clean_categories.get_mut(i) {
+                            cat.size_bytes = size;
+                            cat.file_count = count;
+                        }
+                    }
+                }
             }
         }
 
-        // Throttled process scanning loop (1.5s): keeps sys.processes() updated without UI micro-stutters
+        // 1. Process scanning loop: keeps self.top_processes refreshed in real time every 1.5s
         if self.initial_scan_done && self.last_process_refresh.elapsed() >= Duration::from_millis(1500) {
-            self.sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+            self.top_processes = get_top_processes(&mut self.sys, 35);
             self.last_process_refresh = Instant::now();
         }
 
-        if self.last_refresh.elapsed() >= Duration::from_secs(1) {
+        // 2. High-frequency Real-time Core Metrics: CPU usage %, CPU core frequencies, RAM stats, Power status every 500ms
+        if self.last_refresh.elapsed() >= Duration::from_millis(500) {
             if self.initial_scan_done {
-                self.sys.refresh_cpu_usage();
+                self.sys.refresh_cpu_all();
                 self.protection.cpu_usage = self.sys.global_cpu_usage();
                 self.foreground_info = get_foreground_process(&self.sys);
             }
             self.mem_stats = get_memory_stats();
-            self.power_status = get_power_status();
+
+            // Refresh power status while preserving real-time watts, voltage and charge rates
+            let mut new_power = get_power_status();
+            new_power.power_watts = self.power_status.power_watts;
+            new_power.voltage_volts = self.power_status.voltage_volts;
+            new_power.discharge_rate_mw = self.power_status.discharge_rate_mw;
+            new_power.charge_rate_mw = self.power_status.charge_rate_mw;
+            self.power_status = new_power;
 
             // Run autonomous engine tick and persist if state changed
             let state_changed = self.autonomous.tick(
@@ -1469,22 +1500,32 @@ impl OptimizerApp {
                 self.sync_config();
             }
 
-            // Periodic ACPI battery poll (every 10s) running in background without UI freezing
-            if self.power_status.has_battery
-                && !self.bg_fetch_in_progress
-                && self.initial_scan_done
-                && self.last_battery_poll.elapsed() >= Duration::from_secs(10)
-            {
-                self.bg_fetch_in_progress = true;
-                self.last_battery_poll = Instant::now();
-                let tx = self.bg_tx.clone();
-                std::thread::spawn(move || {
-                    let bats = get_dual_battery_info();
-                    let _ = tx.send(BackgroundMessage::BatteryUpdate(bats));
-                });
-            }
-
             self.last_refresh = Instant::now();
+        }
+
+        // 3. Disk Free Space Real-time Refresh every 2.0s
+        if self.initial_scan_done && self.last_disk_refresh.elapsed() >= Duration::from_millis(2000) {
+            let (tot, avail) = crate::hardware_profile::get_current_disk_space();
+            if tot > 0 {
+                self.autonomous.hardware_profile.disk_total_bytes = tot;
+                self.autonomous.hardware_profile.disk_available_bytes = avail;
+            }
+            self.last_disk_refresh = Instant::now();
+        }
+
+        // 4. Periodic ACPI battery poll (every 4s) running in background without UI freezing
+        if self.power_status.has_battery
+            && !self.bg_fetch_in_progress
+            && self.initial_scan_done
+            && self.last_battery_poll.elapsed() >= Duration::from_secs(4)
+        {
+            self.bg_fetch_in_progress = true;
+            self.last_battery_poll = Instant::now();
+            let tx = self.bg_tx.clone();
+            std::thread::spawn(move || {
+                let bats = get_dual_battery_info();
+                let _ = tx.send(BackgroundMessage::BatteryUpdate(bats));
+            });
         }
     }
 
@@ -1534,19 +1575,30 @@ impl OptimizerApp {
         // 4. Thu hồi bộ nhớ Working Set RAM
         let (freed_ram, count) = trim_working_sets(&mut self.sys);
 
-        // 5. Ưu tiên CPU app Focus và ép EcoQoS app ngầm
-        let (_, eco_count) = apply_foreground_boost_and_eco(
+        // 5. Ưu tiên CPU app Focus và ép EcoQoS app ngầm (Topology aware)
+        let (_, eco_count) = apply_foreground_boost_and_eco_with_topology(
             &self.sys,
             self.foreground_info.as_ref().map(|(pid, _)| *pid),
+            Some(&self.autonomous.hardware_profile.cpu_topology),
         );
+        if self.autonomous.is_pro {
+            if let Some((pid, _)) = self.foreground_info {
+                let is_gaming = self.autonomous.current_scenario == Scenario::Gaming;
+                apply_pro_foreground_boost_with_topology(
+                    pid,
+                    &self.autonomous.hardware_profile.cpu_topology,
+                    is_gaming,
+                );
+            }
+        }
 
         self.mem_stats = get_memory_stats();
         self.top_processes = get_top_processes(&mut self.sys, 25);
 
         let mode_desc = match current_mode {
             OperatingMode::HardwareOptimal => format!(
-                "tối ưu phần cứng ({} nhân, SSD: {})",
-                self.autonomous.hardware_profile.cpu_logical_cores,
+                "tối ưu phần cứng ({}, SSD: {})",
+                self.autonomous.hardware_profile.cpu_topology.topology_summary,
                 self.autonomous.hardware_profile.is_ssd
             ),
             OperatingMode::WorkloadAdaptive => {
@@ -1567,13 +1619,30 @@ impl OptimizerApp {
     }
 
     fn clean_cpu_partition(&mut self) {
-        let (boosted, eco_count) = apply_foreground_boost_and_eco(
+        let (boosted, eco_count) = apply_foreground_boost_and_eco_with_topology(
             &self.sys,
             self.foreground_info.as_ref().map(|(pid, _)| *pid),
+            Some(&self.autonomous.hardware_profile.cpu_topology),
         );
+        let pro_applied = if self.autonomous.is_pro {
+            if let Some((pid, _)) = self.foreground_info {
+                let is_gaming = self.autonomous.current_scenario == Scenario::Gaming;
+                apply_pro_foreground_boost_with_topology(
+                    pid,
+                    &self.autonomous.hardware_profile.cpu_topology,
+                    is_gaming,
+                )
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        let pro_label = if pro_applied { " + VIP Topology Boost" } else { "" };
         let msg = format!(
-            "Dọn dẹp CPU: Ưu tiên tiến trình đang dùng ({}), đưa {} ứng dụng nền vào chế độ EcoQoS.",
+            "Dọn dẹp CPU: Ưu tiên tiến trình đang dùng ({}{}), đưa {} ứng dụng nền vào chế độ EcoQoS.",
             if boosted > 0 { "Tăng tốc hoàn tất" } else { "Đã duy trì" },
+            pro_label,
             eco_count
         );
         self.quick_opt_msg = format!("✓ {}", msg);
@@ -1598,9 +1667,10 @@ impl OptimizerApp {
             self.power_status.is_ac_online,
             self.power_status.battery_percent,
         );
-        let (_, eco_count) = apply_foreground_boost_and_eco(
+        let (_, eco_count) = apply_foreground_boost_and_eco_with_topology(
             &self.sys,
             self.foreground_info.as_ref().map(|(pid, _)| *pid),
+            Some(&self.autonomous.hardware_profile.cpu_topology),
         );
         let (freed_ram, _) = trim_working_sets(&mut self.sys);
         self.power_status = crate::power::get_power_status();
@@ -1666,7 +1736,7 @@ impl eframe::App for OptimizerApp {
         if self.last_interaction.elapsed() < Duration::from_millis(1200) {
             ui.ctx().request_repaint();
         } else {
-            ui.ctx().request_repaint_after(Duration::from_millis(300));
+            ui.ctx().request_repaint_after(Duration::from_millis(250));
         }
 
         let p = self.palette;
@@ -2812,8 +2882,8 @@ impl OptimizerApp {
                         ui.label(RichText::new(self.autonomous.hardware_profile.cpu_brand.trim()).size(typography::BODY_TEXT).strong().color(p.text_primary));
                         ui.end_row();
 
-                        ui.label(RichText::new("Cấu trúc nhân:").size(typography::DETAIL_TEXT).color(p.text_secondary));
-                        ui.label(RichText::new(format!("{} Nhân vật lý / {} Luồng logic", self.autonomous.hardware_profile.cpu_physical_cores, self.autonomous.hardware_profile.cpu_logical_cores)).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
+                        ui.label(RichText::new("Kiến trúc Topology:").size(typography::DETAIL_TEXT).color(p.text_secondary));
+                        ui.label(RichText::new(&self.autonomous.hardware_profile.cpu_topology.topology_summary).size(typography::DETAIL_TEXT).strong().color(p.text_primary));
                         ui.end_row();
 
                         ui.label(RichText::new("Xung nhịp:").size(typography::DETAIL_TEXT).color(p.text_secondary));
@@ -3280,12 +3350,14 @@ impl OptimizerApp {
             // 4. DC Limit
             ui.label(RichText::new("4. Xung CPU khi rút sạc").size(typography::DETAIL_TEXT).strong().color(p.text_primary));
             ui.label(RichText::new(format!("Giới hạn {}% Turbo", self.cpu_limit_dc)).size(typography::DETAIL_TEXT).color(p.text_secondary));
-            let dc_btn = egui::Button::new(RichText::new("Hạ 80% DC").size(typography::BTN_SMALL).strong().color(Color32::WHITE))
+            let optimal_dc = self.autonomous.hardware_profile.cpu_topology.calculate_optimal_dc_limit(self.power_status.battery_percent);
+            let dc_btn_label = format!("Hạ {}% DC", optimal_dc);
+            let dc_btn = egui::Button::new(RichText::new(dc_btn_label).size(typography::BTN_SMALL).strong().color(Color32::WHITE))
                 .fill(p.primary_btn)
                 .corner_radius(CornerRadius::same(spacing::BTN_RADIUS));
             if ui.add(dc_btn).clicked() {
-                self.cpu_limit_dc = 80;
-                let _ = set_cpu_max_state_dc(80);
+                self.cpu_limit_dc = optimal_dc;
+                let _ = set_cpu_max_state_dc(optimal_dc);
                 self.sync_config();
             }
             ui.end_row();
@@ -3442,8 +3514,29 @@ impl OptimizerApp {
         });
         ui.add_space(3.0);
 
+        let safe_size: u64 = self.clean_categories
+            .iter()
+            .filter(|c| c.tier == CleanTier::Safe)
+            .map(|c| c.size_bytes)
+            .sum();
+        let dev_size: u64 = self.clean_categories
+            .iter()
+            .filter(|c| c.tier == CleanTier::Developer)
+            .map(|c| c.size_bytes)
+            .sum();
+        let safe_btn_text = if safe_size > 0 {
+            format!("Dọn rác an toàn ({})", format_bytes(safe_size))
+        } else {
+            "Dọn rác an toàn".to_string()
+        };
+        let dev_btn_text = if dev_size > 0 {
+            format!("Dọn Dev Cache ({})", format_bytes(dev_size))
+        } else {
+            "Dọn Dev Cache".to_string()
+        };
+
         ui.horizontal_wrapped(|ui| {
-            let clean_safe_btn = egui::Button::new(RichText::new("Dọn rác an toàn").size(typography::BTN_NORMAL).color(Color32::WHITE))
+            let clean_safe_btn = egui::Button::new(RichText::new(safe_btn_text).size(typography::BTN_NORMAL).color(Color32::WHITE))
                 .fill(Color32::from_rgb(16, 120, 60));
             if ui.add(clean_safe_btn).clicked() {
                 let (freed, count) = self.clean_by_tier(CleanTier::Safe);
@@ -3451,7 +3544,6 @@ impl OptimizerApp {
             }
 
             let pro_unlocked = is_pro_active(&self.license);
-            let dev_btn_text = "Dọn Dev Cache";
             let clean_dev_btn = egui::Button::new(
                 RichText::new(dev_btn_text)
                     .size(typography::BTN_NORMAL)
@@ -3797,9 +3889,8 @@ impl OptimizerApp {
             },
             |ui| {
                 let arch_desc = format!(
-                    "Đã tối ưu chuẩn cho cấu hình {} nhân / {} luồng",
-                    self.autonomous.hardware_profile.cpu_physical_cores,
-                    self.autonomous.hardware_profile.cpu_logical_cores
+                    "Đã tối ưu chuẩn: {}",
+                    self.autonomous.hardware_profile.cpu_topology.topology_summary
                 );
                 render_info_chip(
                     ui,
@@ -4126,6 +4217,8 @@ impl OptimizerApp {
         render_settings_row!(
             ui,
             |ui| {
+                let opt_dc = self.autonomous.hardware_profile.cpu_topology.calculate_optimal_dc_limit(self.power_status.battery_percent);
+                let opt_label = format!("{}%", opt_dc);
                 if render_slider_chip(
                     ui,
                     &p,
@@ -4134,7 +4227,7 @@ impl OptimizerApp {
                     &mut self.cpu_limit_dc,
                     50..=100,
                     "%",
-                    Some(("80%", 80)),
+                    Some((&opt_label, opt_dc)),
                 ) {
                     let _ = set_cpu_max_state_dc(self.cpu_limit_dc);
                     self.sync_config();
@@ -4519,14 +4612,14 @@ impl OptimizerApp {
                     ui,
                     &p,
                     "2. Dọn dẹp Dev Cache lập trình",
-                    "Dọn sạch cache build và package npm, cargo, pip, go-build",
+                    "Dọn sạch cache build và package npm, yarn, cargo, pip, go-build, nuget, gradle",
                     "Dọn ngay",
                     || {
                         if !self.check_pro_gate("Dọn dẹp Dev Cache") {
                             return;
                         }
-                        let (freed, _) = self.clean_by_tier(CleanTier::Developer);
-                        self.criteria_apply_msg = format!("✓ Đã dọn sạch {} Dev Cache.", format_bytes(freed));
+                        let (freed, count) = self.clean_by_tier(CleanTier::Developer);
+                        self.criteria_apply_msg = format!("✓ Đã dọn sạch {} Dev Cache ({} tệp).", format_bytes(freed), count);
                     },
                 );
             },

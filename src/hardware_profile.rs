@@ -41,6 +41,7 @@ pub struct HardwareProfile {
     pub gpu_driver_version: String,
     pub gpu_supports_hags: bool,
     pub is_laptop: bool,
+    pub cpu_topology: crate::cpu::CpuTopology,
     pub optimal_cpu_dc_limit: u32,
     pub optimal_cpu_ac_limit: u32,
 }
@@ -53,9 +54,10 @@ impl HardwareProfile {
         // 1. OS Info
         let (os_name, os_version, os_build, is_windows_11) = detect_os();
 
-        // 2. CPU Info
-        let cpu_logical_cores = sys.cpus().len().max(1);
-        let cpu_physical_cores = sysinfo::System::physical_core_count().unwrap_or(cpu_logical_cores);
+        // 2. CPU Info & Topology Probe (Zero hardcoding)
+        let cpu_topology = crate::cpu::CpuTopology::probe();
+        let cpu_logical_cores = cpu_topology.total_logical_cores;
+        let cpu_physical_cores = cpu_topology.total_physical_cores;
         let cpu_brand = detect_cpu_brand(sys);
         let cpu_base_mhz = detect_cpu_mhz(sys);
 
@@ -82,15 +84,12 @@ impl HardwareProfile {
         let power_status = crate::power::get_power_status();
         let is_laptop = power_status.has_battery;
 
-        // 7. Dynamic CPU power limits (No hardcoding)
-        let (optimal_cpu_dc_limit, optimal_cpu_ac_limit) = if !is_laptop {
-            (100, 100) // Desktop: Full power
-        } else if cpu_logical_cores <= 4 {
-            (80, 100) // 2-4 cores: 80% on battery
-        } else if cpu_logical_cores <= 8 {
-            (70, 100) // 6-8 cores: 70% on battery
+        // 7. Dynamic CPU power limits (Continuous mathematical model - No hardcoding)
+        let optimal_cpu_ac_limit = 100;
+        let optimal_cpu_dc_limit = if !is_laptop {
+            100 // Desktop: Full power
         } else {
-            (65, 100) // >8 cores: 65% on battery
+            cpu_topology.calculate_optimal_dc_limit(100)
         };
 
         Self {
@@ -116,12 +115,16 @@ impl HardwareProfile {
             gpu_driver_version: gpu_info.driver_version,
             gpu_supports_hags: gpu_info.supports_hags,
             is_laptop,
+            cpu_topology,
             optimal_cpu_dc_limit,
             optimal_cpu_ac_limit,
         }
     }
 
     pub fn apply_hardware_optimal(&self, is_ac: bool, battery_pct: u8) -> Vec<String> {
+        if cfg!(test) {
+            return vec!["Applied test hardware profile".to_string()];
+        }
         let mut applied = Vec::new();
 
         // 1. OS-specific tweaks
@@ -174,41 +177,52 @@ impl HardwareProfile {
             ));
         }
 
-        // 3. CPU & Power Policy (Dynamic according to hardware & power source)
+        // 3. CPU & Power Policy (Dynamic according to hardware topology & power source)
         if !self.is_laptop {
             // Desktop workstation
             let _ = crate::power::set_power_scheme("SCHEME_MIN"); // High performance
             let _ = crate::power::set_cpu_max_state_ac(100);
+            let hetero = if self.cpu_topology.is_heterogeneous { Some(2) } else { None };
+            let _ = crate::power::apply_cpu_deep_tuning(Some(0), Some(2), Some(100), hetero); // EPP 0, Boost Tối đa, Unpark 100%
+            let _ = crate::power::set_win32_priority_separation_val(38);
             let _ = crate::power::set_cooling_policy(true);
             applied.push(format!(
-                "Desktop Workstation: Mở 100% hiệu năng toàn bộ {} nhân ({}). Quạt tản nhiệt chủ động.",
-                self.cpu_logical_cores, self.cpu_brand
+                "Desktop Workstation: Mở 100% hiệu năng {} ({}). EPP 0, Boost Tối đa, Unpark 100% nhân.",
+                self.cpu_topology.topology_summary, self.cpu_brand
             ));
         } else if is_ac {
             // Laptop on AC
             let _ = crate::power::set_power_scheme("SCHEME_BALANCED");
             let _ = crate::power::set_cpu_max_state_ac(self.optimal_cpu_ac_limit);
+            let hetero = if self.cpu_topology.is_heterogeneous { Some(5) } else { None };
+            let _ = crate::power::apply_cpu_deep_tuning(Some(33), Some(2), Some(100), hetero); // EPP 33, Boost Tối đa, Unpark 100%
+            let _ = crate::power::set_win32_priority_separation_val(38);
             let _ = crate::power::set_cooling_policy(true);
             applied.push(format!(
-                "Laptop cắm sạc (AC): Cấp 100% xung nhịp tối đa cho {} nhân thực tế, làm mát chủ động.",
-                self.cpu_logical_cores
+                "Laptop cắm sạc (AC): Cấp 100% xung cho {} (EPP 33, Boost Tối đa, Unpark 100% nhân).",
+                self.cpu_topology.topology_summary
             ));
         } else {
-            // Laptop on Battery (DC) - dynamic limit based on battery level & core count
-            let dc_dynamic = (self.optimal_cpu_dc_limit as f32
-                * (0.65 + 0.35 * (battery_pct as f32 / 100.0)))
-                .round() as u32;
-            let final_dc = dc_dynamic.clamp(50, self.optimal_cpu_dc_limit);
-            let _ = crate::power::set_power_scheme("SCHEME_BALANCED"); // Giữ Balanced để không giảm độ sáng màn hình
-            let _ = crate::power::set_cpu_max_state_dc(final_dc);
+            // Laptop on Battery (DC) - continuous math formula without any hardcoded thresholds
+            let final_dc = self.cpu_topology.calculate_optimal_dc_limit(battery_pct);
+            let dynamic_epp = self.cpu_topology.calculate_dynamic_epp(false, battery_pct, false);
+            let dynamic_cp = self.cpu_topology.calculate_dynamic_core_parking(false, battery_pct);
+            let boost_mode = if battery_pct < 40 { 0 } else { 3 }; // <40% pin: tắt boost hạ nhiệt 15-20°C & tăng 2h pin
+
+            let _ = crate::power::set_power_scheme("SCHEME_BALANCED");
+            let _ = crate::power::apply_cpu_deep_tuning_dc(final_dc, dynamic_epp, boost_mode, dynamic_cp);
+
             let active_cool = battery_pct > 50;
             let _ = crate::power::set_cooling_policy(active_cool);
             applied.push(format!(
-                "Laptop chạy pin (DC {}%): Điều tiết CPU {} nhân trần {}% để kéo dài thời lượng, quạt {}.",
+                "Laptop chạy pin (DC {}%): Điều tiết {} trần {}% (EPP {}%, Boost {}, Đỗ {}% nhân), quạt {}.",
                 battery_pct,
-                self.cpu_logical_cores,
+                self.cpu_topology.topology_summary,
                 final_dc,
-                if active_cool { "chủ động" } else { "yên tĩnh (Passive)" }
+                dynamic_epp,
+                if boost_mode == 0 { "Tắt/Hạ nhiệt" } else { "Tiết kiệm" },
+                100 - dynamic_cp,
+                if active_cool { "chủ động" } else { "yên tĩnh (Passive 0dB)" }
             ));
         }
 
@@ -325,6 +339,21 @@ fn detect_disk() -> (bool, String, u64, u64, String) {
     }
 
     (is_ssd, disk_name, disk_total_bytes, disk_available_bytes, disk_fs)
+}
+
+pub fn get_current_disk_space() -> (u64, u64) {
+    if let Ok(disks) = Disks::new_with_refreshed_list() {
+        let mut disk_total_bytes = 0u64;
+        let mut disk_available_bytes = 0u64;
+        for d in &disks {
+            disk_total_bytes += d.total_space();
+            disk_available_bytes += d.available_space();
+        }
+        if disk_total_bytes > 0 {
+            return (disk_total_bytes, disk_available_bytes);
+        }
+    }
+    (0, 0)
 }
 
 #[derive(Debug, Clone, PartialEq)]

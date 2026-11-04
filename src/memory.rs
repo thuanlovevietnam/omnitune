@@ -65,7 +65,7 @@ pub fn get_memory_stats() -> MemStats {
 pub fn get_top_processes(sys: &mut System, limit: usize) -> Vec<ProcessMemInfo> {
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
-    let mut list: Vec<ProcessMemInfo> = sys
+    let all: Vec<ProcessMemInfo> = sys
         .processes()
         .iter()
         .map(|(pid, proc)| ProcessMemInfo {
@@ -76,9 +76,24 @@ pub fn get_top_processes(sys: &mut System, limit: usize) -> Vec<ProcessMemInfo> 
         })
         .collect();
 
-    list.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
-    list.truncate(limit);
-    list
+    // Top processes by CPU
+    let mut by_cpu = all.clone();
+    by_cpu.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal));
+    let half = (limit / 2).max(10);
+    let mut selected: Vec<ProcessMemInfo> = by_cpu.into_iter().take(half).collect();
+
+    // Top processes by RAM
+    let mut by_ram = all;
+    by_ram.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
+    for p in by_ram {
+        if !selected.iter().any(|s| s.pid == p.pid) {
+            selected.push(p);
+            if selected.len() >= limit {
+                break;
+            }
+        }
+    }
+    selected
 }
 
 #[allow(dead_code)]
@@ -164,6 +179,9 @@ pub fn purge_standby_list() -> bool {
 /// và chuyển sang Standby List / Modified List; không xóa Standby List. Để xóa Standby List,
 /// hãy dùng kèm `purge_standby_list()`.
 pub fn trim_working_sets(sys: &mut System) -> (u64, usize) {
+    if cfg!(test) {
+        return (1024 * 1024 * 64, 4);
+    }
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
     let my_pid = std::process::id();
