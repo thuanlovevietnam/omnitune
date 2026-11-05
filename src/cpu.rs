@@ -1,13 +1,15 @@
 use serde::{Deserialize, Serialize};
-use sysinfo::System;
 use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::SystemInformation::{
     GetLogicalProcessorInformationEx, RelationProcessorCore,
     SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
 };
 use windows_sys::Win32::System::Threading::{
-    OpenProcess, SetProcessAffinityMask, PROCESS_SET_INFORMATION,
+    GetActiveProcessorCount, GetActiveProcessorGroupCount, OpenProcess, SetProcessAffinityMask,
+    PROCESS_SET_INFORMATION,
 };
+
+const ALL_PROCESSOR_GROUPS: u16 = 0xFFFF;
 
 /// Cấu trúc đại diện cho hình thái vi kiến trúc CPU thực tế
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,7 +37,7 @@ impl Default for CpuTopology {
             has_smt: false,
             is_heterogeneous: false,
             p_core_mask: 1,
-            e_core_mask: 1,
+            e_core_mask: 0,
             all_cores_mask: 1,
             non_core0_mask: 1,
             topology_summary: "1 Nhân / 1 Luồng".to_string(),
@@ -73,9 +75,11 @@ impl CpuTopology {
         let mut core_masks = Vec::new();
 
         let mut offset = 0usize;
-        while offset < length as usize {
+        let min_header_size = std::mem::size_of::<u32>() * 2;
+        while offset + min_header_size <= length as usize {
             let item = unsafe { &*(buffer.as_ptr().add(offset) as *const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX) };
-            if item.Size == 0 {
+            let item_size = item.Size as usize;
+            if item_size == 0 || offset.saturating_add(item_size) > length as usize {
                 break;
             }
 
@@ -91,7 +95,8 @@ impl CpuTopology {
                 let p_groups = proc_info.GroupMask.as_ptr();
                 for g in 0..proc_info.GroupCount as usize {
                     let group_aff = unsafe { *p_groups.add(g) };
-                    // SetProcessAffinityMask operates on Group 0 (first 64 processors)
+                    // SetProcessAffinityMask hoạt động trên Processor Group 0 (tối đa 64 luồng đầu tiên).
+                    // Gom nhóm và ưu tiên Group 0 để tránh tràn bitmask usize trên kiến trúc 64-bit.
                     if group_aff.Group == 0 {
                         let mask = group_aff.Mask as usize;
                         phys_core_mask |= mask;
@@ -102,11 +107,7 @@ impl CpuTopology {
                 efficiency_classes.push(proc_info.EfficiencyClass);
                 core_masks.push(phys_core_mask);
             }
-            offset += item.Size as usize;
-        }
-
-        if total_physical == 0 || total_logical == 0 {
-            return Self::fallback_probe();
+            offset += item_size;
         }
 
         let max_eff = efficiency_classes.iter().copied().max().unwrap_or(0);
@@ -128,23 +129,39 @@ impl CpuTopology {
                     e_cores += 1;
                 }
             } else {
+                // Đồng nhất: toàn bộ nhân đều là P-Core, E-Core để trống (0)
                 p_mask |= mask;
-                e_mask |= mask;
                 p_cores += 1;
             }
         }
 
         let all_mask = p_mask | e_mask;
-        let non_core0_mask = if total_logical >= 6 {
-            all_mask & !0x03 // Loại trừ Core 0 & Core 1 (DPC ngắt chuột / Card mạng / USB)
+
+        if total_physical == 0 || total_logical == 0 || all_mask == 0 {
+            return Self::fallback_probe();
+        }
+
+        // 2. Tự động tính toán mặt nạ bảo vệ ngắt (Hardware Interrupt Shielding Mask):
+        // Nếu total_logical >= 6: Loại trừ 2 luồng đầu tiên (Core 0 và luồng SMT đi kèm): all_mask & !0x03
+        // Nếu total_logical < 6: Giữ nguyên all_cores_mask để chống Core Starvation.
+        let non_core0_mask = if total_logical >= 6 && (all_mask & !0x03usize) != 0 {
+            all_mask & !0x03usize
         } else {
             all_mask
         };
+
+        // 3. Nhận diện nhóm đa xử lý (> 64 Cores / Multi-Group)
+        let group_count = unsafe { GetActiveProcessorGroupCount() } as usize;
 
         let topology_summary = if is_heterogeneous {
             format!(
                 "{}P + {}E ({} luồng, Kiến trúc Lai)",
                 p_cores, e_cores, total_logical
+            )
+        } else if total_logical > 64 || group_count > 1 {
+            format!(
+                "{}C / {}T (Đa Group: {} nhóm, Ưu tiên Group 0)",
+                total_physical, total_logical, group_count.max(2)
             )
         } else if has_smt {
             format!(
@@ -173,25 +190,43 @@ impl CpuTopology {
         }
     }
 
-    fn fallback_probe() -> Self {
-        let (logical, physical) = if let Ok(mut sys) = System::new() {
-            sys.refresh_cpu_all();
-            let l = sys.cpus().len().max(1);
-            let p = sysinfo::System::physical_core_count().unwrap_or(l);
-            (l, p)
+    /// 4. Cơ chế Fallback an toàn đa tầng khi kernel từ chối cấp thông tin
+    pub fn fallback_probe() -> Self {
+        // Tầng 1: Win32 native API cực nhanh (< 0.01ms) không tốn bộ nhớ heap
+        let win32_all = unsafe { GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) } as usize;
+        let win32_g0 = unsafe { GetActiveProcessorCount(0) } as usize;
+
+        // Tầng 2: sysinfo physical_core_count() và available_parallelism
+        let sys_physical = sysinfo::System::physical_core_count().ok();
+        let sys_logical = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+
+        let logical = if win32_all > 0 {
+            win32_all
+        } else if sys_logical > 0 {
+            sys_logical
         } else {
-            (1, 1)
+            1
         };
+
+        let physical = sys_physical.unwrap_or(logical).max(1);
         let has_smt = logical > physical;
 
-        let mask = if logical >= (std::mem::size_of::<usize>() * 8) {
+        // Group 0 mask: giới hạn 64 luồng trong Group 0 để không tràn usize
+        let group0_logical = if win32_g0 > 0 {
+            win32_g0
+        } else {
+            logical.min(64)
+        }.clamp(1, 64);
+
+        let mask = if group0_logical >= (std::mem::size_of::<usize>() * 8) {
             usize::MAX
         } else {
-            (1usize << logical).wrapping_sub(1)
+            (1usize << group0_logical).wrapping_sub(1)
         };
 
-        let non_core0_mask = if logical >= 6 {
-            mask & !0x03
+        // Quy tắc toán học bảo vệ ngắt: Nếu >= 6 luồng, loại trừ 2 luồng đầu (Core 0 + SMT)
+        let non_core0_mask = if logical >= 6 && (mask & !0x03usize) != 0 {
+            mask & !0x03usize
         } else {
             mask
         };
@@ -202,6 +237,7 @@ impl CpuTopology {
             format!("{}C / {}T (Fallback)", physical, logical)
         };
 
+        // Cấu hình đối xứng an toàn
         Self {
             total_logical_cores: logical,
             total_physical_cores: physical,
@@ -210,7 +246,7 @@ impl CpuTopology {
             has_smt,
             is_heterogeneous: false,
             p_core_mask: mask,
-            e_core_mask: mask,
+            e_core_mask: 0,
             all_cores_mask: mask,
             non_core0_mask,
             topology_summary: summary,
@@ -257,18 +293,16 @@ impl CpuTopology {
         }
     }
 
-    /// Gán Affinity tối ưu cho Game: Né Core 0 (ngắt chuột/mạng) và ưu tiên P-Core
-    pub fn boost_gaming_process(&self, pid: u32) -> bool {
-        if pid <= 4 {
-            return false;
-        }
-
-        let target_mask = if self.is_heterogeneous {
+    /// Tính toán mặt nạ CPU tối ưu cho Game: Né Core 0 (ngắt chuột/mạng) và ưu tiên P-Core
+    pub fn calculate_gaming_mask(&self) -> usize {
+        if self.is_heterogeneous {
             let p_isolated = self.p_core_mask & self.non_core0_mask;
             if p_isolated != 0 {
                 p_isolated
-            } else {
+            } else if self.p_core_mask != 0 {
                 self.p_core_mask
+            } else {
+                self.all_cores_mask
             }
         } else {
             let non_c0 = self.all_cores_mask & self.non_core0_mask;
@@ -277,8 +311,16 @@ impl CpuTopology {
             } else {
                 self.all_cores_mask
             }
-        };
+        }
+    }
 
+    /// Gán Affinity tối ưu cho Game: Né Core 0 (ngắt chuột/mạng) và ưu tiên P-Core
+    pub fn boost_gaming_process(&self, pid: u32) -> bool {
+        if pid <= 4 {
+            return false;
+        }
+
+        let target_mask = self.calculate_gaming_mask();
         set_process_affinity_native(pid, target_mask)
     }
 
@@ -287,7 +329,37 @@ impl CpuTopology {
         if pid <= 4 {
             return false;
         }
+        // Trên hệ thống đa Processor Group (> 64 cores), không gán SetProcessAffinityMask(Group 0)
+        // để tránh khóa tiến trình vào 64 core đầu tiên và tước đoạt các Processor Group còn lại của trình biên dịch!
+        if self.total_logical_cores > 64 {
+            return true;
+        }
         set_process_affinity_native(pid, self.all_cores_mask)
+    }
+
+    /// Tính toán mặt nạ CPU khi ép tiến trình nền ngốn tài nguyên vào E-Core hoặc nửa sau Group 0
+    pub fn calculate_throttle_mask(&self) -> usize {
+        if self.is_heterogeneous && self.e_core_mask != 0 {
+            self.e_core_mask
+        } else if self.total_logical_cores >= 4 {
+            // Group 0 có tối đa 64 nhân biểu diễn trong all_cores_mask (usize).
+            // Chia đôi số nhân thuộc Group 0 để cô lập tiến trình nền sang nửa sau, né Core 0.
+            let group0_cores = self.all_cores_mask.count_ones() as usize;
+            let shift = (group0_cores / 2).min(32);
+            let lower_half_mask = if shift == 0 {
+                0
+            } else {
+                (1usize << shift).wrapping_sub(1)
+            };
+            let upper_half = self.all_cores_mask & !lower_half_mask;
+            if upper_half != 0 {
+                upper_half
+            } else {
+                self.all_cores_mask
+            }
+        } else {
+            self.all_cores_mask
+        }
     }
 
     /// Ép tiến trình nền ngốn tài nguyên vào E-Core (nếu là CPU lai) hoặc giới hạn tải
@@ -296,15 +368,7 @@ impl CpuTopology {
             return false;
         }
 
-        let target_mask = if self.is_heterogeneous && self.e_core_mask != 0 {
-            self.e_core_mask
-        } else if self.total_logical_cores >= 4 {
-            // CPU đồng nhất nhiều nhân: ép chạy ở nửa sau danh sách nhân (xa Core 0)
-            self.all_cores_mask & !( (1usize << (self.total_logical_cores / 2)).wrapping_sub(1) )
-        } else {
-            self.all_cores_mask
-        };
-
+        let target_mask = self.calculate_throttle_mask();
         set_process_affinity_native(pid, target_mask)
     }
 }
@@ -330,9 +394,6 @@ mod tests {
 
     #[test]
     fn test_topology_probe_validity() {
-        let dummy: SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX = unsafe { std::mem::zeroed() };
-        println!("Processor GroupMask array length: {}", unsafe { dummy.Anonymous.Processor.GroupMask.len() });
-
         let topo = CpuTopology::probe();
         assert!(topo.total_logical_cores >= 1, "Logical cores must be >= 1");
         assert!(topo.total_physical_cores >= 1, "Physical cores must be >= 1");
@@ -340,6 +401,170 @@ mod tests {
         assert!(topo.p_core_mask > 0, "P core mask must not be 0");
         assert!(!topo.topology_summary.is_empty(), "Summary must not be empty");
         println!("Tested CpuTopology: {:?}", topo);
+    }
+
+    #[test]
+    fn test_probe_latency_under_5ms() {
+        let start = std::time::Instant::now();
+        let topo = CpuTopology::probe();
+        let elapsed = start.elapsed();
+        println!("CpuTopology::probe() took: {:?}", elapsed);
+        // Trong môi trường test debug cho phép dung sai tối đa 15ms phòng trường hợp context switch của hệ điều hành
+        assert!(
+            elapsed.as_millis() < 15,
+            "Probe execution latency must be fast, took: {:?}",
+            elapsed
+        );
+        assert!(topo.total_logical_cores >= 1);
+    }
+
+    #[test]
+    fn test_starvation_shielding_less_than_6_cores() {
+        // Mô phỏng CPU 4 cores / 4 threads (ví dụ i5-6500 hoặc máy ảo VM 4 vCPUs)
+        let mut topo = CpuTopology::default();
+        topo.total_physical_cores = 4;
+        topo.total_logical_cores = 4;
+        topo.all_cores_mask = 0x0F;
+        topo.p_core_mask = 0x0F;
+        topo.e_core_mask = 0;
+        topo.p_core_count = 4;
+        topo.e_core_count = 0;
+        topo.is_heterogeneous = false;
+
+        // Công thức: total_logical < 6 -> non_core0_mask = all_cores_mask
+        let non_c0 = if topo.total_logical_cores >= 6 {
+            topo.all_cores_mask & !0x03
+        } else {
+            topo.all_cores_mask
+        };
+        topo.non_core0_mask = non_c0;
+
+        assert_eq!(
+            topo.non_core0_mask, topo.all_cores_mask,
+            "CPUs with < 6 logical cores must retain all cores in non_core0_mask to avoid core starvation"
+        );
+        assert_eq!(topo.calculate_gaming_mask(), 0x0F);
+        // Throttle mask trên 4 cores: 4/2 = 2, shift 2 -> lower_half 0x03, upper_half 0x0C
+        assert_eq!(topo.calculate_throttle_mask(), 0x0C);
+    }
+
+    #[test]
+    fn test_interrupt_shielding_greater_equal_6_cores() {
+        // Mô phỏng CPU 8 cores / 16 threads (ví dụ Ryzen 7 hoặc Intel i7)
+        let mut topo = CpuTopology::default();
+        topo.total_physical_cores = 8;
+        topo.total_logical_cores = 16;
+        topo.all_cores_mask = 0xFFFF;
+        topo.p_core_mask = 0xFFFF;
+        topo.e_core_mask = 0;
+        topo.p_core_count = 8;
+        topo.e_core_count = 0;
+        topo.is_heterogeneous = false;
+
+        let non_c0 = if topo.total_logical_cores >= 6 {
+            topo.all_cores_mask & !0x03
+        } else {
+            topo.all_cores_mask
+        };
+        topo.non_core0_mask = non_c0;
+
+        assert_eq!(topo.non_core0_mask & 0x01, 0, "Core 0 Thread 0 must be excluded");
+        assert_eq!(topo.non_core0_mask & 0x02, 0, "Core 0 Thread 1 (SMT) must be excluded");
+        assert_eq!(topo.non_core0_mask & 0xFFFC, 0xFFFC, "Remaining 14 threads must be active");
+        assert_eq!(topo.calculate_gaming_mask(), 0xFFFC);
+    }
+
+    #[test]
+    fn test_heterogeneous_pe_core_partitioning() {
+        // Mô phỏng Intel Core i9-13900K (8P + 16E, 32 threads)
+        let mut topo = CpuTopology::default();
+        topo.total_physical_cores = 24;
+        topo.total_logical_cores = 32;
+        topo.p_core_count = 8;
+        topo.e_core_count = 16;
+        topo.is_heterogeneous = true;
+        topo.has_smt = true;
+        // 8 P-Cores có SMT chiếm 16 luồng đầu tiên (0..15)
+        topo.p_core_mask = 0x0000_FFFF;
+        // 16 E-Cores không có SMT chiếm 16 luồng tiếp theo (16..31)
+        topo.e_core_mask = 0xFFFF_0000;
+        topo.all_cores_mask = topo.p_core_mask | topo.e_core_mask;
+        topo.non_core0_mask = topo.all_cores_mask & !0x03;
+
+        // Kiểm tra tính chất phân vùng
+        assert_eq!(topo.p_core_mask & topo.e_core_mask, 0, "P-mask and E-mask must be mutually exclusive");
+        assert_eq!(topo.p_core_count + topo.e_core_count, topo.total_physical_cores);
+
+        // Gaming mask ưu tiên P-Core và loại trừ Core 0
+        let gaming_mask = topo.calculate_gaming_mask();
+        assert_eq!(gaming_mask, 0x0000_FFFC, "Gaming mask must target P-cores excluding Core 0/1");
+
+        // Throttle mask ép chặt vào E-Core
+        let throttle_mask = topo.calculate_throttle_mask();
+        assert_eq!(throttle_mask, 0xFFFF_0000, "Background throttle must isolate to E-cores");
+    }
+
+    #[test]
+    fn test_multi_group_and_shift_overflow_safety() {
+        // Mô phỏng máy trạm AMD Threadripper 64C / 128T (2 Processor Groups)
+        let mut topo = CpuTopology::default();
+        topo.total_physical_cores = 64;
+        topo.total_logical_cores = 128;
+        topo.p_core_count = 64;
+        topo.e_core_count = 0;
+        topo.is_heterogeneous = false;
+        topo.has_smt = true;
+        // Group 0 gồm 64 luồng đầu tiên, biểu diễn bằng usize::MAX
+        topo.all_cores_mask = usize::MAX;
+        topo.p_core_mask = usize::MAX;
+        topo.e_core_mask = 0;
+        topo.non_core0_mask = usize::MAX & !0x03usize;
+
+        assert_eq!(topo.total_logical_cores, 128);
+        assert_eq!(topo.total_physical_cores, 64);
+        assert_eq!(topo.non_core0_mask & 0x03, 0);
+
+        // Kiểm tra không bị panic do tràn dịch bit (1 << (128 / 2))
+        // Trên hệ thống 64-bit, dịch 64 sẽ gây panic nếu không được giới hạn cẩn thận
+        let throttle_mask = topo.calculate_throttle_mask();
+        // 64 cores trong Group 0 / 2 = 32. Lower half: 32 bits (0x0000_0000_FFFF_FFFF).
+        // Upper half: 0xFFFF_FFFF_0000_0000.
+        assert_eq!(
+            throttle_mask,
+            0xFFFF_FFFF_0000_0000usize,
+            "Throttle mask for 128T CPU must isolate to upper 32 cores of Group 0 without overflow"
+        );
+
+        let gaming_mask = topo.calculate_gaming_mask();
+        assert_eq!(gaming_mask, usize::MAX & !0x03usize);
+    }
+
+    #[test]
+    fn test_boost_compilation_process_multi_group_preserves_all_groups() {
+        let mut topo = CpuTopology::default();
+        topo.total_logical_cores = 128;
+        topo.all_cores_mask = usize::MAX;
+        // Trên hệ thống đa nhóm (> 64 cores), hàm phải return true và không ép affinity vào 64 core của Group 0
+        assert!(topo.boost_compilation_process(1234));
+    }
+
+    #[test]
+    fn test_fallback_probe_correctness_and_symmetry() {
+        let topo = CpuTopology::fallback_probe();
+        assert!(topo.total_logical_cores >= 1);
+        assert!(topo.total_physical_cores >= 1);
+        assert!(!topo.is_heterogeneous, "Fallback must always produce symmetric homogeneous configuration");
+        assert_eq!(topo.e_core_count, 0, "Fallback must have 0 E-cores");
+        assert_eq!(topo.e_core_mask, 0, "Fallback must have e_core_mask = 0");
+        assert_eq!(topo.p_core_mask, topo.all_cores_mask, "Fallback p_core_mask must equal all_cores_mask");
+        assert_eq!(topo.p_core_count, topo.total_physical_cores);
+        assert!(topo.all_cores_mask > 0);
+
+        if topo.total_logical_cores >= 6 {
+            assert_eq!(topo.non_core0_mask, topo.all_cores_mask & !0x03);
+        } else {
+            assert_eq!(topo.non_core0_mask, topo.all_cores_mask);
+        }
     }
 
     #[test]

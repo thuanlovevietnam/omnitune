@@ -504,5 +504,12 @@ mod tests {
         assert!(!hw.gpu_name.is_empty());
         assert!(!hw.gpu_driver_version.is_empty());
         assert!(hw.ram_total_gb > 0.0);
+        assert!(hw.cpu_logical_cores >= 1);
+        assert!(hw.cpu_physical_cores >= 1);
+        assert_eq!(hw.cpu_logical_cores, hw.cpu_topology.total_logical_cores);
+        assert_eq!(hw.cpu_physical_cores, hw.cpu_topology.total_physical_cores);
+        assert!(hw.cpu_topology.all_cores_mask > 0);
+        assert!(hw.cpu_topology.p_core_mask > 0);
+        assert!(!hw.cpu_topology.topology_summary.is_empty());
     }
 }
