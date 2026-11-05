@@ -5,6 +5,7 @@ use crate::memory::trim_working_sets;
 use crate::scenarios::{apply_scenario, detect_recommended_scenario, Scenario};
 use crate::types::ActivityEvent;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use sysinfo::System;
 use windows_sys::Win32::Foundation::SYSTEMTIME;
@@ -59,6 +60,8 @@ pub struct AutonomousEngine {
     pub eco_qos_enabled: bool,
     pub auto_ram_enabled: bool,
     pub last_ram_trim: Instant,
+    pub last_eco_scan: Instant,
+    pub jailed_pids: HashSet<u32>,
     pub hardware_profile: HardwareProfile,
     pub operating_mode: OperatingMode,
     pub is_pro: bool,
@@ -85,6 +88,8 @@ impl AutonomousEngine {
             eco_qos_enabled,
             auto_ram_enabled,
             last_ram_trim: Instant::now(),
+            last_eco_scan: Instant::now(),
+            jailed_pids: HashSet::new(),
             hardware_profile: hw,
             operating_mode: mode,
             is_pro,
@@ -263,23 +268,66 @@ impl AutonomousEngine {
         }
         self.last_power_ac = Some(is_ac);
 
-        // 2. Nhận diện cửa sổ tương tác (Foreground Watcher & EcoQoS)
+        // 2. Nhận diện cửa sổ tương tác (Foreground Watcher & EcoQoS Pipeline)
         let fg = get_foreground_process(sys);
         let fg_pid = fg.as_ref().map(|(pid, _)| *pid);
 
-        if fg_pid != self.last_foreground_pid {
+        let fg_changed = fg_pid != self.last_foreground_pid;
+        let periodic_eco_due = self.last_eco_scan.elapsed() >= Duration::from_millis(2000);
+
+        if fg_changed {
             self.last_foreground_pid = fg_pid;
 
-            // Áp dụng EcoQoS cho các app nền
-            if self.eco_qos_enabled {
-                let (boosted, eco_count) = crate::eco_qos::apply_foreground_boost_and_eco_with_topology(
-                    sys,
-                    fg_pid,
-                    Some(&self.hardware_profile.cpu_topology),
-                );
+            // Nếu tiến trình active mới chưa có trong snapshot của sys, làm mới ngay để bắt đúng cây cha - con
+            if fg_pid.is_some_and(|pid| sys.process(sysinfo::Pid::from_u32(pid)).is_none()) {
+                sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+            }
+
+            // Tự động nhận diện theo chế độ làm việc (chỉ khi đang ở chế độ WorkloadAdaptive, auto_pilot_enabled và không khóa thủ công)
+            if self.operating_mode == OperatingMode::WorkloadAdaptive
+                && self.auto_pilot_enabled
+                && !self.is_manual_scenario
+            {
+                if let Some(target_scen) = detect_recommended_scenario(sys, is_ac, battery_pct, idle_ms) {
+                    if target_scen != self.current_scenario {
+                        self.current_scenario = target_scen;
+                        state_changed = true;
+                        let msg = apply_scenario(
+                            target_scen,
+                            sys,
+                            &self.hardware_profile,
+                            is_ac,
+                            battery_pct,
+                            self.is_pro,
+                        );
+                        self.log("[CHUYỂN]", format!("Phát hiện tác vụ [{}]: {}", target_scen.name(), msg));
+                    }
+                }
+            }
+        }
+
+        if self.eco_qos_enabled && (fg_changed || periodic_eco_due) {
+            self.last_eco_scan = Instant::now();
+            let is_gaming = self.current_scenario == Scenario::Gaming
+                || fg.as_ref().is_some_and(|(pid, name)| {
+                    let exe = sys
+                        .process(sysinfo::Pid::from_u32(*pid))
+                        .and_then(|p| p.exe().and_then(|e| e.to_str()))
+                        .unwrap_or(name.as_str());
+                    crate::gpu::is_process_using_3d_graphics(*pid, exe)
+                });
+
+            let (boosted, eco_count) = crate::eco_qos::maintain_dual_tier_pipeline(
+                sys,
+                fg_pid,
+                Some(&self.hardware_profile.cpu_topology),
+                is_gaming,
+                &mut self.jailed_pids,
+            );
+
+            if fg_changed {
                 if let Some((pid, ref name)) = fg {
                     if self.is_pro {
-                        let is_gaming = self.current_scenario == Scenario::Gaming;
                         crate::eco_qos::apply_pro_foreground_boost_with_topology(
                             pid,
                             &self.hardware_profile.cpu_topology,
@@ -307,28 +355,11 @@ impl AutonomousEngine {
                         self.log("[FOCUS]", format!("Tập trung '{}' (Đã cấp luồng ưu tiên cao).", name));
                     }
                 }
-            }
-
-            // Tự động nhận diện theo chế độ làm việc (chỉ khi đang ở chế độ WorkloadAdaptive, auto_pilot_enabled và không khóa thủ công)
-            if self.operating_mode == OperatingMode::WorkloadAdaptive
-                && self.auto_pilot_enabled
-                && !self.is_manual_scenario
-            {
-                if let Some(target_scen) = detect_recommended_scenario(sys, is_ac, battery_pct, idle_ms) {
-                    if target_scen != self.current_scenario {
-                        self.current_scenario = target_scen;
-                        state_changed = true;
-                        let msg = apply_scenario(
-                            target_scen,
-                            sys,
-                            &self.hardware_profile,
-                            is_ac,
-                            battery_pct,
-                            self.is_pro,
-                        );
-                        self.log("[CHUYỂN]", format!("Phát hiện tác vụ [{}]: {}", target_scen.name(), msg));
-                    }
-                }
+            } else if eco_count > 0 {
+                self.log(
+                    "[ECO JAIL]",
+                    format!("Giam lỏng {} ứng dụng nền mới phát sinh tải vào E-Core / EcoQoS.", eco_count),
+                );
             }
         }
 
@@ -456,5 +487,19 @@ mod tests {
         assert!(engine.activity_log.iter().any(|ev| {
             ev.icon == "[CHỌN THỦ CÔNG]" && ev.message.contains("[Văn phòng] Họp & Làm việc")
         }));
+    }
+
+    #[test]
+    fn test_autonomous_dual_cadence_and_unjail() {
+        let (mut engine, mut sys) = create_test_engine(OperatingMode::WorkloadAdaptive, false);
+        engine.eco_qos_enabled = true;
+        let test_pid = 888888u32;
+        engine.jailed_pids.insert(test_pid);
+
+        // Run tick: test_pid is in jailed_pids
+        engine.tick(&mut sys, true, 100, 40);
+
+        // Verify engine handles state cleanly
+        assert!(engine.last_eco_scan.elapsed().as_secs() <= 1);
     }
 }

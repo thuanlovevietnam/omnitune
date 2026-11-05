@@ -142,10 +142,15 @@ impl CpuTopology {
         }
 
         // 2. Tự động tính toán mặt nạ bảo vệ ngắt (Hardware Interrupt Shielding Mask):
-        // Nếu total_logical >= 6: Loại trừ 2 luồng đầu tiên (Core 0 và luồng SMT đi kèm): all_mask & !0x03
+        // Loại trừ các luồng thuộc Core 0 (được trích xuất động từ core_masks[0], né DPC/ngắt chuột/mạng).
         // Nếu total_logical < 6: Giữ nguyên all_cores_mask để chống Core Starvation.
-        let non_core0_mask = if total_logical >= 6 && (all_mask & !0x03usize) != 0 {
-            all_mask & !0x03usize
+        let c0_mask = core_masks
+            .first()
+            .copied()
+            .unwrap_or(if has_smt { 0x03usize } else { 0x01usize });
+
+        let non_core0_mask = if total_logical >= 6 && (all_mask & !c0_mask) != 0 {
+            all_mask & !c0_mask
         } else {
             all_mask
         };
@@ -328,6 +333,16 @@ impl CpuTopology {
             return false;
         }
 
+        let target_mask = self.calculate_gaming_mask();
+        set_process_affinity_native(pid, target_mask)
+    }
+
+    /// Gán Affinity thích ứng cho tiến trình tiêu điểm (Focus Family):
+    /// CPU lai: P-Core né Core 0 | CPU thuần nhất: Toàn bộ nhân né Core 0
+    pub fn boost_focus_process(&self, pid: u32) -> bool {
+        if pid <= 4 {
+            return false;
+        }
         let target_mask = self.calculate_gaming_mask();
         set_process_affinity_native(pid, target_mask)
     }
@@ -554,6 +569,13 @@ mod tests {
         topo.all_cores_mask = usize::MAX;
         // Trên hệ thống đa nhóm (> 64 cores), hàm phải return true và không ép affinity vào 64 core của Group 0
         assert!(topo.boost_compilation_process(1234));
+    }
+
+    #[test]
+    fn test_boost_focus_process_pid_bounds() {
+        let topo = CpuTopology::default();
+        assert!(!topo.boost_focus_process(0));
+        assert!(!topo.boost_focus_process(4));
     }
 
     #[test]

@@ -1576,14 +1576,15 @@ impl OptimizerApp {
         let (freed_ram, count) = trim_working_sets(&mut self.sys);
 
         // 5. Ưu tiên CPU app Focus và ép EcoQoS app ngầm (Topology aware)
+        let is_gaming = self.autonomous.current_scenario == Scenario::Gaming;
         let (_, eco_count) = apply_foreground_boost_and_eco_with_topology(
             &self.sys,
             self.foreground_info.as_ref().map(|(pid, _)| *pid),
             Some(&self.autonomous.hardware_profile.cpu_topology),
+            is_gaming,
         );
         if self.autonomous.is_pro {
             if let Some((pid, _)) = self.foreground_info {
-                let is_gaming = self.autonomous.current_scenario == Scenario::Gaming;
                 apply_pro_foreground_boost_with_topology(
                     pid,
                     &self.autonomous.hardware_profile.cpu_topology,
@@ -1619,14 +1620,15 @@ impl OptimizerApp {
     }
 
     fn clean_cpu_partition(&mut self) {
+        let is_gaming = self.autonomous.current_scenario == Scenario::Gaming;
         let (boosted, eco_count) = apply_foreground_boost_and_eco_with_topology(
             &self.sys,
             self.foreground_info.as_ref().map(|(pid, _)| *pid),
             Some(&self.autonomous.hardware_profile.cpu_topology),
+            is_gaming,
         );
         let pro_applied = if self.autonomous.is_pro {
             if let Some((pid, _)) = self.foreground_info {
-                let is_gaming = self.autonomous.current_scenario == Scenario::Gaming;
                 apply_pro_foreground_boost_with_topology(
                     pid,
                     &self.autonomous.hardware_profile.cpu_topology,
@@ -1671,6 +1673,7 @@ impl OptimizerApp {
             &self.sys,
             self.foreground_info.as_ref().map(|(pid, _)| *pid),
             Some(&self.autonomous.hardware_profile.cpu_topology),
+            false,
         );
         let (freed_ram, _) = trim_working_sets(&mut self.sys);
         self.power_status = crate::power::get_power_status();
