@@ -85,7 +85,9 @@ pub fn apply_scenario(
             let _ = crate::power::set_power_scheme("SCHEME_BALANCED");
             let _ = crate::power::set_cpu_max_state_dc(hw.optimal_cpu_dc_limit);
             let _ = crate::power::set_cpu_max_state_ac(hw.optimal_cpu_ac_limit);
-            let _ = crate::power::apply_cpu_deep_tuning(Some(33), Some(1), Some(if is_ac { 100 } else { 50 }), None);
+            let dynamic_epp = hw.cpu_topology.calculate_dynamic_epp(is_ac, battery_pct, false);
+            let dynamic_cp = hw.cpu_topology.calculate_dynamic_core_parking(is_ac, battery_pct);
+            let _ = crate::power::apply_cpu_deep_tuning(Some(dynamic_epp), Some(1), Some(dynamic_cp), None);
             let _ = crate::power::set_win32_priority_separation_val(2);
 
             // Restore normal priority to common apps
@@ -111,7 +113,9 @@ pub fn apply_scenario(
             let _ = crate::power::set_power_scheme("SCHEME_BALANCED");
             let _ = crate::power::set_cpu_max_state_dc(hw.optimal_cpu_ac_limit);
             let _ = crate::power::set_cpu_max_state_ac(hw.optimal_cpu_ac_limit);
-            let _ = crate::power::apply_cpu_deep_tuning(Some(0), Some(2), Some(100), None); // 0% delay, aggressive boost, unpark all
+            let dynamic_epp = hw.cpu_topology.calculate_dynamic_epp(is_ac, battery_pct, true);
+            let dynamic_cp = hw.cpu_topology.calculate_dynamic_core_parking(is_ac, battery_pct);
+            let _ = crate::power::apply_cpu_deep_tuning(Some(dynamic_epp), Some(2), Some(dynamic_cp), None);
             let _ = crate::power::set_win32_priority_separation_val(24); // Fixed long quanta (through-put build)
             let _ = crate::power::set_cooling_policy(true);
 
@@ -203,7 +207,9 @@ pub fn apply_scenario(
             let cpu_limit = if is_ac { 80 } else { 70 };
             let _ = crate::power::set_cpu_max_state_ac(cpu_limit);
             let _ = crate::power::set_cpu_max_state_dc(cpu_limit);
-            let _ = crate::power::apply_cpu_deep_tuning(Some(33), Some(3), Some(if is_ac { 100 } else { 50 }), None); // Efficient boost: avoids high spikes & fan noise
+            let dynamic_epp = hw.cpu_topology.calculate_dynamic_epp(is_ac, battery_pct, false);
+            let dynamic_cp = hw.cpu_topology.calculate_dynamic_core_parking(is_ac, battery_pct);
+            let _ = crate::power::apply_cpu_deep_tuning(Some(dynamic_epp), Some(3), Some(dynamic_cp), None); // Efficient boost: avoids high spikes & fan noise
             let _ = crate::power::set_win32_priority_separation_val(38);
 
             // Prioritize meeting and office apps
@@ -227,8 +233,8 @@ pub fn apply_scenario(
             let _ = crate::gpu::apply_scenario_office_gpu(hw, is_ac);
 
             format!(
-                "Đã bật kịch bản Họp & Văn phòng: Chống tắt màn hình, EPP 33%/Boost Êm, tối ưu GPU Capture, ưu tiên {} app họp/office, hạ {} app đồng bộ, quạt êm chống ồn.",
-                boosted, deprioritized
+                "Đã bật kịch bản Họp & Văn phòng: Chống tắt màn hình, EPP {}%/Boost Êm, tối ưu GPU Capture, ưu tiên {} app họp/office, hạ {} app đồng bộ, quạt êm chống ồn.",
+                dynamic_epp, boosted, deprioritized
             )
         }
 
@@ -241,7 +247,9 @@ pub fn apply_scenario(
             let cpu_target = if is_ac { 75 } else { 65 };
             let _ = crate::power::set_cpu_max_state_dc(cpu_target);
             let _ = crate::power::set_cpu_max_state_ac(cpu_target);
-            let _ = crate::power::apply_cpu_deep_tuning(Some(33), Some(3), Some(if is_ac { 100 } else { 50 }), None);
+            let dynamic_epp = hw.cpu_topology.calculate_dynamic_epp(is_ac, battery_pct, false);
+            let dynamic_cp = hw.cpu_topology.calculate_dynamic_core_parking(is_ac, battery_pct);
+            let _ = crate::power::apply_cpu_deep_tuning(Some(dynamic_epp), Some(3), Some(dynamic_cp), None);
 
             let boosted = prioritize_apps(
                 sys,
@@ -261,8 +269,8 @@ pub fn apply_scenario(
             let _ = crate::gpu::apply_scenario_remote_gpu();
 
             format!(
-                "Đã bật kịch bản Remote Desktop: Chống Sleep/Lock, CPU êm {}% (EPP 33), GPU HW encoding, tối ưu mạng TCP, ưu tiên {} app remote, hạ {} app sync.",
-                cpu_target, boosted, deprioritized
+                "Đã bật kịch bản Remote Desktop: Chống Sleep/Lock, CPU êm {}% (EPP {}), GPU HW encoding, tối ưu mạng TCP, ưu tiên {} app remote, hạ {} app sync.",
+                cpu_target, dynamic_epp, boosted, deprioritized
             )
         }
 
@@ -274,7 +282,8 @@ pub fn apply_scenario(
 
             let _ = crate::power::set_cpu_max_state_dc(60);
             let _ = crate::power::set_cpu_max_state_ac(65);
-            let _ = crate::power::apply_cpu_deep_tuning(Some(60), Some(3), Some(50), None);
+            let dynamic_cp = hw.cpu_topology.calculate_dynamic_core_parking(is_ac, battery_pct);
+            let _ = crate::power::apply_cpu_deep_tuning(Some(60), Some(3), Some(dynamic_cp), None);
 
             let deprioritized = prioritize_apps(
                 sys,

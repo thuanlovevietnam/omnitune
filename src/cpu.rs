@@ -255,41 +255,49 @@ impl CpuTopology {
 
     /// Hàm toán học tính trần CPU Max State khi chạy pin liên tục theo số nhân logic và % pin còn lại.
     /// Hoàn toàn không hardcode câu lệnh `if cpu <= 4 ... else if <= 8`.
+    /// Base(N) = Clamp(55.0 + 30.0 / sqrt(max(N, 1) / 2), 65.0, 85.0)
+    /// DC_Limit(N, B) = Clamp(Base(N) * (0.70 + 0.30 * (B / 100)), 50, 95)
     pub fn calculate_optimal_dc_limit(&self, battery_pct: u8) -> u32 {
-        let n = self.total_logical_cores.max(2) as f32;
+        let n = (self.total_logical_cores as f32).max(1.0);
         // Công thức suy biến phi tuyến: CPU càng nhiều nhân càng có thể hãm sâu hơn mà không giảm độ mượt
         let base = 55.0 + (30.0 / (n / 2.0).sqrt());
         let clamped_base = base.clamp(65.0, 85.0);
 
         // Điều chế theo dung lượng pin thực tế: pin thấp tự động hạ dần trần xung nhịp để chống sụt áp cell pin
-        let dynamic_dc = clamped_base * (0.70 + 0.30 * (battery_pct as f32 / 100.0));
+        let bat_ratio = (battery_pct as f32 / 100.0).clamp(0.0, 1.0);
+        let dynamic_dc = clamped_base * (0.70 + 0.30 * bat_ratio);
         (dynamic_dc.round() as u32).clamp(50, 95)
     }
 
     /// Tính toán EPP (Energy Performance Preference) tối ưu theo trạng thái nguồn và ngữ cảnh
+    /// AC: Game/Render/Compile = 0; Balanced = 33
+    /// DC: EPP_DC(B) = Clamp(50.0 + (1.0 - B / 100) * 35.0, 50, 85)
     pub fn calculate_dynamic_epp(&self, is_ac: bool, battery_pct: u8, is_gaming_or_dev: bool) -> u32 {
-        if is_gaming_or_dev {
-            0 // Maximum Performance (0% trễ tăng xung nhịp)
-        } else if is_ac {
-            33 // Balanced Snappy (Phản hồi nhạy nhưng không dư thừa nhiệt)
+        if is_ac {
+            if is_gaming_or_dev {
+                0 // Maximum Performance (0% trễ tăng xung nhịp tức thì trong 0ms)
+            } else {
+                33 // Balanced Snappy (Điểm ngọt hiệu năng/nhiệt độ)
+            }
         } else {
-            // Khi chạy pin: tính liên tục từ 50% đến 85%
+            // Khi dùng pin (DC): co giãn liên tục từ 50% đến 85% theo dung lượng pin
             let bat_ratio = (battery_pct as f32 / 100.0).clamp(0.0, 1.0);
             let epp = 50.0 + (1.0 - bat_ratio) * 35.0;
             (epp.round() as u32).clamp(50, 85)
         }
     }
 
-    /// Tính toán Core Parking Min Cores (Tỷ lệ nhân thức tối thiểu)
+    /// Tính toán Core Parking Min Cores (Tỷ lệ nhân thức tối thiểu - CPMINCORES)
+    /// AC: Luôn giữ 100% (Thức toàn bộ nhân, xóa bỏ độ trễ C-State Exit Latency)
+    /// DC: Co giãn mượt mà liên tục theo pin từ 25% -> 75%
     pub fn calculate_dynamic_core_parking(&self, is_ac: bool, battery_pct: u8) -> u32 {
         if is_ac {
             100 // AC: Đánh thức 100% nhân, triệt tiêu micro-stutter do trễ đánh thức C-state
-        } else if battery_pct > 60 {
-            75 // Pin tốt: Giữ 75% nhân sẵn sàng
-        } else if battery_pct > 25 {
-            50 // Pin trung bình: Cho phép đỗ 50% nhân
         } else {
-            25 // Pin yếu: Chỉ giữ 25% nhân thức (tối thiểu 2-4 luồng) để tiết kiệm sâu
+            // DC: Tuyến tính mượt mà từ 25% (pin cạn) đến 75% (pin đầy)
+            let bat_ratio = (battery_pct as f32 / 100.0).clamp(0.0, 1.0);
+            let cp = 25.0 + bat_ratio * 50.0;
+            (cp.round() as u32).clamp(25, 75)
         }
     }
 
@@ -597,6 +605,85 @@ mod tests {
         let epp_bat_full = topo.calculate_dynamic_epp(false, 100, false);
         let epp_bat_low = topo.calculate_dynamic_epp(false, 10, false);
         assert!(epp_bat_low > epp_bat_full, "Low battery must have higher EPP (more energy saving)");
+    }
+
+    #[test]
+    fn test_continuous_math_engine_matrix() {
+        let mut topo = CpuTopology::default();
+
+        // 1. DC Limit Matrix Verification
+        // N=1 or N=2: Base = 85.0 -> B=100: 85, B=50: 72, B=15: 63, B=0: 60
+        topo.total_logical_cores = 2;
+        assert_eq!(topo.calculate_optimal_dc_limit(100), 85);
+        assert_eq!(topo.calculate_optimal_dc_limit(50), 72);
+        assert_eq!(topo.calculate_optimal_dc_limit(15), 63);
+        assert_eq!(topo.calculate_optimal_dc_limit(0), 60);
+
+        // N=4: Base = 76.21 -> B=100: 76, B=50: 65, B=15: 57, B=0: 53
+        topo.total_logical_cores = 4;
+        assert_eq!(topo.calculate_optimal_dc_limit(100), 76);
+        assert_eq!(topo.calculate_optimal_dc_limit(50), 65);
+        assert_eq!(topo.calculate_optimal_dc_limit(15), 57);
+        assert_eq!(topo.calculate_optimal_dc_limit(0), 53);
+
+        // N=8: Base = 70.0 -> B=100: 70, B=50: 60, B=15: 52, B=0: 50 (clamped)
+        topo.total_logical_cores = 8;
+        assert_eq!(topo.calculate_optimal_dc_limit(100), 70);
+        assert_eq!(topo.calculate_optimal_dc_limit(50), 60);
+        assert_eq!(topo.calculate_optimal_dc_limit(15), 52);
+        assert_eq!(topo.calculate_optimal_dc_limit(0), 50);
+
+        // N=16: Base = 65.61 -> B=100: 66, B=50: 56, B=15: 50, B=0: 50
+        topo.total_logical_cores = 16;
+        assert_eq!(topo.calculate_optimal_dc_limit(100), 66);
+        assert_eq!(topo.calculate_optimal_dc_limit(50), 56);
+        assert_eq!(topo.calculate_optimal_dc_limit(15), 50);
+        assert_eq!(topo.calculate_optimal_dc_limit(0), 50);
+
+        // N=24: Base = 65.0 (clamped) -> B=100: 65, B=50: 55, B=15: 50, B=0: 50
+        topo.total_logical_cores = 24;
+        assert_eq!(topo.calculate_optimal_dc_limit(100), 65);
+        assert_eq!(topo.calculate_optimal_dc_limit(50), 55);
+        assert_eq!(topo.calculate_optimal_dc_limit(15), 50);
+        assert_eq!(topo.calculate_optimal_dc_limit(0), 50);
+
+        // 2. Dynamic Core Parking Verification (Smooth Scaling 25% -> 75%)
+        assert_eq!(topo.calculate_dynamic_core_parking(true, 100), 100);
+        assert_eq!(topo.calculate_dynamic_core_parking(true, 0), 100);
+        assert_eq!(topo.calculate_dynamic_core_parking(false, 100), 75);
+        assert_eq!(topo.calculate_dynamic_core_parking(false, 50), 50);
+        assert_eq!(topo.calculate_dynamic_core_parking(false, 15), 33);
+        assert_eq!(topo.calculate_dynamic_core_parking(false, 0), 25);
+
+        // Monotonicity of Core Parking
+        for b in 0..100 {
+            let cp1 = topo.calculate_dynamic_core_parking(false, b);
+            let cp2 = topo.calculate_dynamic_core_parking(false, b + 1);
+            assert!(cp1 <= cp2, "Core parking must be monotonically non-decreasing with battery");
+            assert!(cp1 >= 25 && cp1 <= 75, "DC core parking must stay within [25, 75]");
+        }
+
+        // 3. Dynamic EPP Matrix Verification
+        assert_eq!(topo.calculate_dynamic_epp(true, 100, true), 0);
+        assert_eq!(topo.calculate_dynamic_epp(true, 0, true), 0);
+        assert_eq!(topo.calculate_dynamic_epp(true, 100, false), 33);
+        assert_eq!(topo.calculate_dynamic_epp(true, 0, false), 33);
+        assert_eq!(topo.calculate_dynamic_epp(false, 100, false), 50);
+        assert_eq!(topo.calculate_dynamic_epp(false, 50, false), 68);
+        assert_eq!(topo.calculate_dynamic_epp(false, 15, false), 80);
+        assert_eq!(topo.calculate_dynamic_epp(false, 0, false), 85);
+    }
+
+    #[test]
+    fn test_zero_core_and_overflow_battery_safety() {
+        let mut topo = CpuTopology::default();
+        topo.total_logical_cores = 0; // Edge case: zero cores reported
+        let dc = topo.calculate_optimal_dc_limit(255); // Overflow battery pct
+        assert!(dc >= 50 && dc <= 95);
+        let cp = topo.calculate_dynamic_core_parking(false, 255);
+        assert_eq!(cp, 75);
+        let epp = topo.calculate_dynamic_epp(false, 255, false);
+        assert_eq!(epp, 50);
     }
 
     #[test]
